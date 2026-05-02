@@ -1,0 +1,217 @@
+package com.travel.travelplanner.ai.prompt;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+
+import com.travel.travelplanner.trip.domain.TripPlan;
+
+@Service
+public class BuildPromptService {
+
+    public String buildPrompt(TripPlan tripPlan) {
+        String destination = tripPlan.getDestination();
+        String start = String.valueOf(tripPlan.getStartDate());
+        String end = String.valueOf(tripPlan.getEndDate());
+
+        String travelStyle = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getTravelStyle() != null)
+                        ? tripPlan.getTripPreferences().getTravelStyle().name()
+                        : "BALANCED";
+
+        String budget = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getBudgetLevel() != null)
+                        ? tripPlan.getTripPreferences().getBudgetLevel().name()
+                        : "MEDIUM";
+
+        String group = (tripPlan.getTripGroup() != null && tripPlan.getTripGroup().getComposition() != null)
+                ? tripPlan.getTripGroup().getComposition().name()
+                : "SOLO";
+
+        String peopleCount = (tripPlan.getTripGroup() != null)
+                ? String.valueOf(tripPlan.getTripGroup().getPeopleCount())
+                : "1";
+
+        String minAge = (tripPlan.getTripGroup() != null && tripPlan.getTripGroup().getMinAge() != null)
+                ? String.valueOf(tripPlan.getTripGroup().getMinAge())
+                : "unknown";
+
+        String maxAge = (tripPlan.getTripGroup() != null && tripPlan.getTripGroup().getMaxAge() != null)
+                ? String.valueOf(tripPlan.getTripGroup().getMaxAge())
+                : "unknown";
+
+        String genderMix = (tripPlan.getTripGroup() != null && tripPlan.getTripGroup().getGenderMix() != null)
+                ? tripPlan.getTripGroup().getGenderMix().name()
+                : "UNKNOWN";
+
+        String groupSummary = group + ", " + peopleCount + " people, ages " + minAge + "-" + maxAge
+                + ", gender mix " + genderMix;
+
+        String interests = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getInterests() != null
+                && !tripPlan.getTripPreferences().getInterests().isEmpty())
+                        ? String.join(", ", tripPlan.getTripPreferences().getInterests())
+                        : "none";
+
+        String constraints = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getConstraints() != null
+                && !tripPlan.getTripPreferences().getConstraints().isEmpty())
+                        ? tripPlan.getTripPreferences().getConstraints().stream().collect(Collectors.joining("; "))
+                        : "none";
+
+        String hotelName = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getHotelName() != null)
+                        ? tripPlan.getTripPreferences().getHotelName()
+                        : "not provided";
+
+        String hotelAddress = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getHotelAddressOrArea() != null)
+                        ? tripPlan.getTripPreferences().getHotelAddressOrArea()
+                        : "not provided";
+
+        String transportPref = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getTransportPreferences() != null)
+                        ? tripPlan.getTripPreferences().getTransportPreferences().name()
+                        : "not provided";
+
+        // Match ItineraryValidator: only when explicitly true (do not default-on when null).
+        boolean includeDirections = tripPlan.getTripPreferences() != null
+                && Boolean.TRUE.equals(tripPlan.getTripPreferences().getIncludeDirections());
+
+        String freeText = (tripPlan.getTripPreferences() != null && tripPlan.getTripPreferences().getFreeText() != null)
+                ? tripPlan.getTripPreferences().getFreeText()
+                : "not provided";
+
+        return """
+                You are an expert travel planner.
+
+                Return ONLY valid JSON (no markdown, no explanations, no extra keys).
+                The output must match EXACTLY the schema below.
+
+                IMPORTANT: Generate the itinerary in TWO languages: English and Hebrew.
+                Provide the exact same structure under "en" and "he". All content (titles, names, notes, directions) must be in the respective language.
+
+                TRIP INPUT
+                - Destination: %s
+                - Dates: %s to %s
+                - Group: %s
+                - Travel style: %s
+                - Budget: %s
+
+                PREFERENCES
+                - Interests (prioritize these): %s
+                - Constraints (STRICT rules, must NOT be violated): %s
+
+                OPTIONAL
+                - Hotel name: %s
+                - Hotel area/address: %s
+                - Transport preference: %s
+                - Include directions: %s
+                - Free text notes: %s
+
+                HARD RULES (must follow)
+                1) Constraints are STRICT. Do not violate them. If a constraint says "avoid museums", then do NOT include museums of any kind (British Museum, National Gallery, Tate Modern, etc.). Replace with non-museum alternatives.
+                2) Interests are HIGH PRIORITY. The plan must reflect them clearly throughout the trip.
+                3) Output must be realistic and city-specific. Avoid generic placeholders like "Local Restaurant" unless you truly cannot propose a specific type/place.
+                4) If Include directions is true, EVERY item MUST include a "transit" object (including TRANSIT items). transit.directions must be non-empty.
+                5) Do NOT invent exact latitude/longitude. Use null for lat/lng.
+                6) Balance by day and time-block:
+                   - Each day should use MORNING, AFTERNOON, EVENING where realistic; include at least TWO of these per day.
+                   - Each block must contain 1-6 items (aim for 2-4).
+                7) Notes must be more detailed:
+                   - For ATTRACTION: 2–4 sentences including (a) why it’s worth it, (b) recommended duration, (c) one practical tip (tickets, best time, crowd, nearby area).
+                   - For FOOD: mention the style of food + what to try or a quick ordering tip.
+                   - For TRANSIT: name it clearly and include concise step-by-step directions in transit.directions.
+                   - For NOTE: practical reminders.
+                8) "en" = full itinerary in English. "he" = full itinerary in Hebrew (use proper Hebrew text).
+
+                TRANSPORT RULES
+                - Use transportPreference when choosing transit.mode:
+                  - WALKING -> mostly WALK
+                  - PUBLIC_TRANSPORT -> METRO/BUS/TRAM/TRAIN when possible
+                  - TAXI -> mostly TAXI
+                  - CAR -> mostly CAR
+                  - MIXED -> choose best per route
+                - If hotel is provided, treat it as the default base ("Hotel") for the first activity of the day and often the last.
+
+                OUTPUT JSON SCHEMA (exact)
+                {
+                  "en": {
+                    "dayPlans": [
+                      {
+                        "date": "yyyy-MM-dd",
+                        "title": "string (English)",
+                        "blocks": [
+                          {
+                            "timeBlock": "MORNING|AFTERNOON|EVENING",
+                            "items": [
+                              {
+                                "type": "FOOD|ATTRACTION|TRANSIT|NOTE",
+                                "name": "string (English)",
+                                "location": { "name": "string", "lat": null, "lng": null },
+                                "notes": "string|null (English)",
+                                "transit": {
+                                  "from": "string",
+                                  "mode": "WALK|METRO|BUS|TRAM|TRAIN|TAXI|CAR|TRANSFER|MIXED",
+                                  "estimatedMinutes": 0,
+                                  "directions": "string (English)"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "he": {
+                    "dayPlans": [
+                      {
+                        "date": "yyyy-MM-dd",
+                        "title": "string (Hebrew)",
+                        "blocks": [
+                          {
+                            "timeBlock": "MORNING|AFTERNOON|EVENING",
+                            "items": [
+                              {
+                                "type": "FOOD|ATTRACTION|TRANSIT|NOTE",
+                                "name": "string (Hebrew)",
+                                "location": { "name": "string (Hebrew)", "lat": null, "lng": null },
+                                "notes": "string|null (Hebrew)",
+                                "transit": {
+                                  "from": "string",
+                                  "mode": "WALK|METRO|BUS|TRAM|TRAIN|TAXI|CAR|TRANSFER|MIXED",
+                                  "estimatedMinutes": 0,
+                                  "directions": "string (Hebrew)"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+
+                Now generate the bilingual itinerary that satisfies all rules.
+                """
+                .formatted(
+                        destination, start, end, groupSummary, travelStyle, budget,
+                        interests, constraints,
+                        hotelName, hotelAddress, transportPref, includeDirections, freeText);
+    }
+
+    public String buildFixPrompt(TripPlan tripPlan, List<String> violations) {
+        String base = buildPrompt(tripPlan);
+        String problems = String.join("\n -", violations);
+
+        return base + """
+        IMPORTANT: Your previous attempt violated these rules. Fix them and regenerate the FULL bilingual itinerary JSON (both "en" and "he").
+    Violations:
+    - %s
+
+    Return ONLY the corrected JSON, matching the schema exactly.
+        """.formatted(problems);
+    }
+    
+}
