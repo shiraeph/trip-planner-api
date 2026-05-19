@@ -48,4 +48,16 @@ public final class TripDates {
         }
         return eachDay(tripPlan.getStartDate(), tripPlan.getEndDate());
     }
+
+    /** Split a date range into consecutive chunks (e.g. 16 days → 7+7+2). */
+    public static List<List<LocalDate>> chunk(List<LocalDate> dates, int chunkSize) {
+        if (dates == null || dates.isEmpty() || chunkSize < 1) {
+            return List.of();
+        }
+        List<List<LocalDate>> chunks = new ArrayList<>();
+        for (int i = 0; i < dates.size(); i += chunkSize) {
+            chunks.add(List.copyOf(dates.subList(i, Math.min(i + chunkSize, dates.size()))));
+        }
+        return chunks;
+    }
 }

@@ -153,6 +153,7 @@ public class ItineraryValidator {
         return item.getType() == ItineraryItemType.ATTRACTION;
     }
 
+    /** Chunked GPT output often uses one-line notes; normalizer pads shorter text before validation. */
     private static final int MIN_ATTRACTION_NOTES_LEN = 28;
 
     private boolean notesTooShort(String notes) {

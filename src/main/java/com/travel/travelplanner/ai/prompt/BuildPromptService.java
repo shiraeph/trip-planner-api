@@ -89,7 +89,7 @@ public class BuildPromptService {
         List<LocalDate> calendar = TripDates.eachDay(tripPlan);
         String dateList = calendar.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
         String lengthRule = tripDays > 7
-                ? "Keep each ATTRACTION note to 1-2 concise sentences so the full trip fits in one JSON response."
+                ? "Keep ATTRACTION notes concise but at least 30 characters each (why visit + duration or practical tip)."
                 : "Use detailed notes as specified below.";
 
         return """
@@ -231,5 +231,121 @@ public class BuildPromptService {
     Return ONLY the corrected JSON, matching the schema exactly.
         """.formatted(problems);
     }
-    
+
+    /**
+     * Prompt for one segment of a long trip. Output must contain dayPlans only for {@code chunkDates}.
+     */
+    public String buildChunkPrompt(
+            TripPlan tripPlan,
+            List<LocalDate> chunkDates,
+            int chunkIndex,
+            int totalChunks,
+            String continuityHint) {
+        String destination = tripPlan.getDestination();
+        String tripStart = String.valueOf(tripPlan.getStartDate());
+        String tripEnd = String.valueOf(tripPlan.getEndDate());
+        int totalTripDays = TripDates.inclusiveDayCount(tripPlan);
+        int chunkDays = chunkDates.size();
+        String chunkDateList = chunkDates.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
+        String chunkStart = chunkDates.get(0).toString();
+        String chunkEnd = chunkDates.get(chunkDates.size() - 1).toString();
+
+        String travelStyle = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getTravelStyle() != null)
+                        ? tripPlan.getTripPreferences().getTravelStyle().name()
+                        : "BALANCED";
+        String budget = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getBudgetLevel() != null)
+                        ? tripPlan.getTripPreferences().getBudgetLevel().name()
+                        : "MEDIUM";
+        String group = (tripPlan.getTripGroup() != null && tripPlan.getTripGroup().getComposition() != null)
+                ? tripPlan.getTripGroup().getComposition().name()
+                : "SOLO";
+        String peopleCount = (tripPlan.getTripGroup() != null)
+                ? String.valueOf(tripPlan.getTripGroup().getPeopleCount())
+                : "1";
+        String interests = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getInterests() != null
+                && !tripPlan.getTripPreferences().getInterests().isEmpty())
+                        ? String.join(", ", tripPlan.getTripPreferences().getInterests())
+                        : "none";
+        String constraints = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getConstraints() != null
+                && !tripPlan.getTripPreferences().getConstraints().isEmpty())
+                        ? tripPlan.getTripPreferences().getConstraints().stream().collect(Collectors.joining("; "))
+                        : "none";
+        String hotelName = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getHotelName() != null)
+                        ? tripPlan.getTripPreferences().getHotelName()
+                        : "not provided";
+        String hotelArea = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getHotelAddressOrArea() != null)
+                        ? tripPlan.getTripPreferences().getHotelAddressOrArea()
+                        : "not provided";
+        String transportPref = (tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getTransportPreferences() != null)
+                        ? tripPlan.getTripPreferences().getTransportPreferences().name()
+                        : "not provided";
+        boolean includeDirections = tripPlan.getTripPreferences() != null
+                && Boolean.TRUE.equals(tripPlan.getTripPreferences().getIncludeDirections());
+        String freeText = (tripPlan.getTripPreferences() != null && tripPlan.getTripPreferences().getFreeText() != null)
+                ? tripPlan.getTripPreferences().getFreeText()
+                : "not provided";
+
+        String continuity = (continuityHint == null || continuityHint.isBlank())
+                ? ""
+                : "CONTINUITY FROM EARLIER DAYS:\n- " + continuityHint + "\n";
+
+        return """
+                You are an expert travel planner.
+
+                Return ONLY valid JSON (no markdown, no explanations, no extra keys).
+                The output must match EXACTLY the schema below.
+
+                IMPORTANT: Generate the itinerary in TWO languages: English and Hebrew.
+                Provide the exact same structure under "en" and "he".
+
+                FULL TRIP (for context)
+                - Destination: %s
+                - Overall dates: %s to %s (%d days total)
+                - Group: %s, %s people
+                - Travel style: %s, Budget: %s
+                - Interests: %s
+                - Constraints: %s
+                - Hotel: %s (%s), Transport: %s, Include directions: %s
+                - Free text: %s
+
+                THIS CHUNK ONLY (STRICT)
+                - You are generating chunk %d of %d for this trip.
+                - Output dayPlans for exactly %d days: %s
+                - Date range for this chunk: %s to %s
+                - en.dayPlans and he.dayPlans must each have exactly %d entries — no more, no less.
+                - Do NOT include days before %s or after %s.
+                %s
+                HARD RULES
+                1) Constraints are STRICT.
+                2) Each day: exactly THREE blocks with field name "timeBlock" (NOT "title"): MORNING, AFTERNOON, EVENING.
+                   2-3 items per block. NEVER return a block with an empty "items" array.
+                3) Item "type" must be exactly one of: FOOD, ATTRACTION, TRANSIT, NOTE (never ACTIVITY or other values).
+                4) Each ATTRACTION needs notes of at least 30 characters (why visit + duration or tip).
+                5) If Include directions is true, every item needs transit with non-empty directions.
+                6) Put coordinates on location.lat / location.lng (or null), not as top-level lat/lng on items.
+
+                OUTPUT JSON SCHEMA (same as full trip — only populate dayPlans for this chunk's dates)
+                {
+                  "en": { "dayPlans": [ { "date": "yyyy-MM-dd", "title": "...", "blocks": [...] } ] },
+                  "he": { "dayPlans": [ { "date": "yyyy-MM-dd", "title": "...", "blocks": [...] } ] }
+                }
+
+                Generate the bilingual itinerary for this chunk only.
+                """
+                .formatted(
+                        destination, tripStart, tripEnd, totalTripDays,
+                        group, peopleCount, travelStyle, budget,
+                        interests, constraints,
+                        hotelName, hotelArea, transportPref, includeDirections, freeText,
+                        chunkIndex, totalChunks, chunkDays, chunkDateList, chunkStart, chunkEnd, chunkDays,
+                        chunkStart, chunkEnd,
+                        continuity);
+    }
 }
