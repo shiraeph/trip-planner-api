@@ -18,8 +18,8 @@ import com.travel.travelplanner.ai.openai.dto.OpenAiChatRequest;
 import com.travel.travelplanner.ai.openai.dto.OpenAiChatResponse;
 import com.travel.travelplanner.ai.openai.dto.OpenAiMessage;
 import com.travel.travelplanner.ai.prompt.BuildPromptService;
+import com.travel.travelplanner.ai.prompt.ChunkContinuityBuilder;
 import com.travel.travelplanner.trip.domain.TripPlan;
-import com.travel.travelplanner.trip.domain.itinerary.DayPlan;
 import com.travel.travelplanner.trip.domain.itinerary.Itinerary;
 import com.travel.travelplanner.trip.service.TripDates;
 
@@ -102,23 +102,10 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
                 he.getDayPlans().addAll(chunk.getHe().getDayPlans());
             }
 
-            continuityHint = buildContinuityHint(chunk.getEn());
+            continuityHint = ChunkContinuityBuilder.build(chunk.getEn());
         }
 
         return new BilingualItinerary(en, he);
-    }
-
-    private static String buildContinuityHint(Itinerary en) {
-        if (en == null || en.getDayPlans() == null || en.getDayPlans().isEmpty()) {
-            return null;
-        }
-        DayPlan last = en.getDayPlans().get(en.getDayPlans().size() - 1);
-        if (last == null) {
-            return null;
-        }
-        String title = last.getTitle() != null ? last.getTitle() : "";
-        return "The previous segment ended on " + last.getDate() + " (" + title
-                + "). Continue with new activities; do not repeat the same venues.";
     }
 
     private BilingualItinerary generateSinglePass(TripPlan tripPlan, String prompt) {
@@ -134,11 +121,10 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
     private String callGpt(TripPlan tripPlan, String prompt, int daysInPass) {
         OpenAiChatRequest request = new OpenAiChatRequest();
         request.setModel(model);
-        request.setTemperature(0.2);
+        request.setTemperature(0.35);
         request.setMaxTokens(resolveMaxTokens(daysInPass));
         request.setMessages(List.of(
-                new OpenAiMessage("system",
-                        "You are a travel itinerary planner. Return ONLY valid JSON (no markdown, no explanation)."),
+                new OpenAiMessage("system", buildPromptService.buildSystemMessage(tripPlan)),
                 new OpenAiMessage("user", prompt)));
         OpenAiChatResponse response;
         try {
@@ -161,7 +147,8 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
     }
 
     private int resolveMaxTokens(int daysInPass) {
-        int estimated = 2500 + Math.max(daysInPass, 1) * 1300;
+        // ~1.8k tokens per day leaves room for detailed bilingual notes per item.
+        int estimated = 2800 + Math.max(daysInPass, 1) * 1800;
         return Math.min(configuredMaxTokens, Math.max(estimated, 4096));
     }
 
