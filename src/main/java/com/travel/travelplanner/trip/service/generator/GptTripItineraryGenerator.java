@@ -13,6 +13,7 @@ import com.travel.travelplanner.ai.openai.dto.OpenAiChatResponse;
 import com.travel.travelplanner.ai.openai.dto.OpenAiMessage;
 import com.travel.travelplanner.ai.prompt.BuildPromptService;
 import com.travel.travelplanner.trip.domain.TripPlan;
+import com.travel.travelplanner.trip.service.TripDates;
 
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
@@ -27,10 +28,13 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
     @Value("${openai.model}")
     private String model;
 
+    @Value("${openai.max-tokens:16384}")
+    private int configuredMaxTokens;
+
     @Override
     public BilingualItinerary generate(TripPlan tripPlan) {
         String prompt = buildPromptService.buildPrompt(tripPlan);
-        String response = callGptAndParse(prompt);
+        String response = callGptAndParse(tripPlan, prompt);
         try {
             return objectMapper.readValue(response, BilingualItinerary.class);
         } catch (Exception e) {
@@ -42,7 +46,7 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
     @Override
     public BilingualItinerary generateFix(TripPlan tripPlan, List<String> violations) {
         String fixPrompt = buildPromptService.buildFixPrompt(tripPlan, violations);
-        String response = callGptAndParse(fixPrompt);
+        String response = callGptAndParse(tripPlan, fixPrompt);
         try {
             return objectMapper.readValue(response, BilingualItinerary.class);
         } catch (Exception e) {
@@ -51,10 +55,11 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
         }
     }
 
-    private String callGptAndParse(String prompt) {
+    private String callGptAndParse(TripPlan tripPlan, String prompt) {
         OpenAiChatRequest request = new OpenAiChatRequest();
         request.setModel(model);
         request.setTemperature(0.2);
+        request.setMaxTokens(resolveMaxTokens(tripPlan));
         request.setMessages(List.of(
                 new OpenAiMessage("system",
                         "You are a travel itinerary planner Return ONLY valid JSON (no markdown, no explanation)."),
@@ -78,6 +83,13 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
             throw new RuntimeException("GPT returned empty response");
         }
         return sanitizeToJsonObject(json);
+    }
+
+    /** Scale completion budget with trip length (bilingual JSON is large). */
+    private int resolveMaxTokens(TripPlan tripPlan) {
+        int days = TripDates.inclusiveDayCount(tripPlan);
+        int estimated = 2500 + Math.max(days, 1) * 1300;
+        return Math.min(configuredMaxTokens, Math.max(estimated, 4096));
     }
 
     private String sanitizeToJsonObject(String raw) {

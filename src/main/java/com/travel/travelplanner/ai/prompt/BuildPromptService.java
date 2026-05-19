@@ -1,11 +1,13 @@
 package com.travel.travelplanner.ai.prompt;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
 import com.travel.travelplanner.trip.domain.TripPlan;
+import com.travel.travelplanner.trip.service.TripDates;
 
 @Service
 public class BuildPromptService {
@@ -83,6 +85,13 @@ public class BuildPromptService {
                 ? tripPlan.getTripPreferences().getFreeText()
                 : "not provided";
 
+        int tripDays = TripDates.inclusiveDayCount(tripPlan);
+        List<LocalDate> calendar = TripDates.eachDay(tripPlan);
+        String dateList = calendar.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
+        String lengthRule = tripDays > 7
+                ? "Keep each ATTRACTION note to 1-2 concise sentences so the full trip fits in one JSON response."
+                : "Use detailed notes as specified below.";
+
         return """
                 You are an expert travel planner.
 
@@ -94,7 +103,9 @@ public class BuildPromptService {
 
                 TRIP INPUT
                 - Destination: %s
-                - Dates: %s to %s
+                - Dates: %s to %s (inclusive)
+                - Trip length: %d days — dayPlans MUST contain exactly %d entries (one per calendar day, no more, no less)
+                - Required dates in order: %s
                 - Group: %s
                 - Travel style: %s
                 - Budget: %s
@@ -116,15 +127,20 @@ public class BuildPromptService {
                 3) Output must be realistic and city-specific. Avoid generic placeholders like "Local Restaurant" unless you truly cannot propose a specific type/place.
                 4) If Include directions is true, EVERY item MUST include a "transit" object (including TRANSIT items). transit.directions must be non-empty.
                 5) Do NOT invent exact latitude/longitude. Use null for lat/lng.
-                6) Balance by day and time-block:
-                   - Each day should use MORNING, AFTERNOON, EVENING where realistic; include at least TWO of these per day.
-                   - Each block must contain 1-6 items (aim for 2-4).
-                7) Notes must be more detailed:
+                6) Trip length (STRICT — most important):
+                   - The en.dayPlans and he.dayPlans arrays must each have exactly %d objects.
+                   - Do not stop after day 1 or 2. Cover every date from %s through %s.
+                   - Each day object "date" field must match the calendar date for that day (in order).
+                7) Balance by day and time-block (STRICT):
+                   - EVERY day must have exactly THREE blocks: MORNING, AFTERNOON, EVENING.
+                   - Never output only one block for a day. Never label two blocks with the same timeBlock.
+                   - Each block must contain 1-6 items (aim for 2-3 on long trips).
+                8) Notes (%s):
                    - For ATTRACTION: 2–4 sentences including (a) why it’s worth it, (b) recommended duration, (c) one practical tip (tickets, best time, crowd, nearby area).
                    - For FOOD: mention the style of food + what to try or a quick ordering tip.
                    - For TRANSIT: name it clearly and include concise step-by-step directions in transit.directions.
                    - For NOTE: practical reminders.
-                8) "en" = full itinerary in English. "he" = full itinerary in Hebrew (use proper Hebrew text).
+                9) "en" = full itinerary in English. "he" = full itinerary in Hebrew (use proper Hebrew text).
 
                 TRANSPORT RULES
                 - Use transportPreference when choosing transit.mode:
@@ -196,9 +212,11 @@ public class BuildPromptService {
                 Now generate the bilingual itinerary that satisfies all rules.
                 """
                 .formatted(
-                        destination, start, end, groupSummary, travelStyle, budget,
+                        destination, start, end, tripDays, tripDays, dateList,
+                        groupSummary, travelStyle, budget,
                         interests, constraints,
-                        hotelName, hotelAddress, transportPref, includeDirections, freeText);
+                        hotelName, hotelAddress, transportPref, includeDirections, freeText,
+                        tripDays, start, end, lengthRule);
     }
 
     public String buildFixPrompt(TripPlan tripPlan, List<String> violations) {

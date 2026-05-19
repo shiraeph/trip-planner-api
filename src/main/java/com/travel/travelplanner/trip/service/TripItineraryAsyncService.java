@@ -17,6 +17,7 @@ import com.travel.travelplanner.trip.domain.itinerary.DayPlan;
 import com.travel.travelplanner.trip.domain.itinerary.Itinerary;
 import com.travel.travelplanner.trip.repository.TripPlanRepository;
 import com.travel.travelplanner.trip.service.generator.GptTripItineraryGenerator;
+import com.travel.travelplanner.trip.service.validation.ItineraryNormalizer;
 import com.travel.travelplanner.trip.service.validation.ItineraryValidator;
 
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 public class TripItineraryAsyncService {
     private static final Logger log = LoggerFactory.getLogger(TripItineraryAsyncService.class);
 
+    private final ItineraryNormalizer itineraryNormalizer;
     private final ItineraryValidator itineraryValidator;
     private final TripPlanRepository tripPlanRepository;
     private final GptTripItineraryGenerator gptTripItineraryGenerator;
@@ -36,7 +38,7 @@ public class TripItineraryAsyncService {
                 .orElseThrow(() -> new RuntimeException("Trip not found"));
 
         try {
-            BilingualItinerary bilingual = gptTripItineraryGenerator.generate(plan);
+            BilingualItinerary bilingual = normalize(plan, gptTripItineraryGenerator.generate(plan));
             List<String> validation = itineraryValidator.validate(plan, bilingual.getEn());
             if (validation.isEmpty()) {
                 plan.setItineraryEn(bilingual.getEn());
@@ -49,7 +51,7 @@ public class TripItineraryAsyncService {
 
             log.warn("Trip {} first itinerary validation failed ({} issues): {}", tripPlanId, validation.size(), validation);
 
-            BilingualItinerary fix = gptTripItineraryGenerator.generateFix(plan, validation);
+            BilingualItinerary fix = normalize(plan, gptTripItineraryGenerator.generateFix(plan, validation));
             List<String> secondValidation = itineraryValidator.validate(plan, fix.getEn());
             if (secondValidation.isEmpty()) {
                 plan.setItineraryEn(fix.getEn());
@@ -62,7 +64,7 @@ public class TripItineraryAsyncService {
 
             log.warn("Trip {} second itinerary validation failed ({} issues): {}", tripPlanId, secondValidation.size(), secondValidation);
 
-            BilingualItinerary fix2 = gptTripItineraryGenerator.generateFix(plan, secondValidation);
+            BilingualItinerary fix2 = normalize(plan, gptTripItineraryGenerator.generateFix(plan, secondValidation));
             List<String> thirdValidation = itineraryValidator.validate(plan, fix2.getEn());
             if (!thirdValidation.isEmpty()) {
                 plan.setTripStatus(TripStatus.FAILED);
@@ -95,9 +97,11 @@ public class TripItineraryAsyncService {
         List<RegenerateTripRequest.LockedItem> lockedItems = request != null ? request.getLockedItems() : null;
 
         try {
-            BilingualItinerary bilingual = gptTripItineraryGenerator.generate(plan);
+            BilingualItinerary bilingual = normalize(plan, gptTripItineraryGenerator.generate(plan));
             Itinerary mergedEn = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, bilingual.getEn(), lockedBlocks), lockedItems);
             Itinerary mergedHe = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, bilingual.getHe(), lockedBlocks), lockedItems);
+            itineraryNormalizer.normalize(plan, mergedEn, false);
+            itineraryNormalizer.normalize(plan, mergedHe, true);
 
             List<String> validation = itineraryValidator.validate(plan, mergedEn);
             if (validation.isEmpty()) {
@@ -111,9 +115,11 @@ public class TripItineraryAsyncService {
 
             log.warn("Trip {} regenerate first validation failed ({} issues): {}", tripPlanId, validation.size(), validation);
 
-            BilingualItinerary fix = gptTripItineraryGenerator.generateFix(plan, validation);
+            BilingualItinerary fix = normalize(plan, gptTripItineraryGenerator.generateFix(plan, validation));
             Itinerary mergedFixEn = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, fix.getEn(), lockedBlocks), lockedItems);
             Itinerary mergedFixHe = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, fix.getHe(), lockedBlocks), lockedItems);
+            itineraryNormalizer.normalize(plan, mergedFixEn, false);
+            itineraryNormalizer.normalize(plan, mergedFixHe, true);
 
             List<String> secondValidation = itineraryValidator.validate(plan, mergedFixEn);
             if (secondValidation.isEmpty()) {
@@ -127,9 +133,11 @@ public class TripItineraryAsyncService {
 
             log.warn("Trip {} regenerate second validation failed ({} issues): {}", tripPlanId, secondValidation.size(), secondValidation);
 
-            BilingualItinerary fix2 = gptTripItineraryGenerator.generateFix(plan, secondValidation);
+            BilingualItinerary fix2 = normalize(plan, gptTripItineraryGenerator.generateFix(plan, secondValidation));
             Itinerary mergedFix2En = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, fix2.getEn(), lockedBlocks), lockedItems);
             Itinerary mergedFix2He = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, fix2.getHe(), lockedBlocks), lockedItems);
+            itineraryNormalizer.normalize(plan, mergedFix2En, false);
+            itineraryNormalizer.normalize(plan, mergedFix2He, true);
 
             List<String> thirdValidation = itineraryValidator.validate(plan, mergedFix2En);
             if (!thirdValidation.isEmpty()) {
@@ -236,6 +244,19 @@ public class TripItineraryAsyncService {
             copy.setItems(new ArrayList<>(b.getItems()));
         }
         return copy;
+    }
+
+    private BilingualItinerary normalize(TripPlan plan, BilingualItinerary bilingual) {
+        if (bilingual == null) {
+            return null;
+        }
+        if (bilingual.getEn() != null) {
+            itineraryNormalizer.normalize(plan, bilingual.getEn(), false);
+        }
+        if (bilingual.getHe() != null) {
+            itineraryNormalizer.normalize(plan, bilingual.getHe(), true);
+        }
+        return bilingual;
     }
 }
 

@@ -9,6 +9,7 @@ import java.util.Set;
 import org.springframework.stereotype.Component;
 
 import com.travel.travelplanner.trip.domain.TripPlan;
+import com.travel.travelplanner.trip.service.TripDates;
 import com.travel.travelplanner.trip.domain.enums.TimeBlock; 
 import com.travel.travelplanner.trip.domain.enums.ItineraryItemType; 
 import com.travel.travelplanner.trip.domain.itinerary.BlockPlan;
@@ -29,6 +30,13 @@ public class ItineraryValidator {
         if (itinerary.getDayPlans() == null || itinerary.getDayPlans().isEmpty()) {
             violations.add("Itinerary has no dayPlans.");
             return violations;
+        }
+
+        int expectedDays = TripDates.inclusiveDayCount(tripPlan);
+        if (expectedDays > 0 && itinerary.getDayPlans().size() != expectedDays) {
+            violations.add("Expected " + expectedDays + " dayPlans for trip dates "
+                    + tripPlan.getStartDate() + " to " + tripPlan.getEndDate()
+                    + " but got " + itinerary.getDayPlans().size() + ".");
         }
 
         boolean includeDirections = includeDirections(tripPlan);
