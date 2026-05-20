@@ -103,6 +103,36 @@ public final class GptItineraryJsonRepair {
         }
         itemObj.remove("lat");
         itemObj.remove("lng");
+
+        JsonNode transit = itemObj.get("transit");
+        if (transit != null && transit.isObject()) {
+            ObjectNode transitObj = (ObjectNode) transit;
+            if (transitObj.has("mode")) {
+                transitObj.put("mode", mapTransitMode(transitObj.get("mode").asString()));
+            }
+        }
+    }
+
+    /**
+     * GPT often invents modes (BTS, BOAT, etc.). Map to {@link com.travel.travelplanner.trip.domain.enums.TransitMode}.
+     */
+    private static String mapTransitMode(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "MIXED";
+        }
+        String n = raw.trim().toUpperCase(Locale.ROOT).replace(' ', '_').replace('-', '_');
+        return switch (n) {
+            case "BTS", "SKYTRAIN", "SKY_TRAIN", "MRT", "SUBWAY", "UNDERGROUND", "U_BAHN", "S_BAHN", "LIGHT_RAIL" ->
+                    "METRO";
+            case "BOAT", "FERRY", "SHIP", "CRUISE", "SPEEDBOAT", "WATER_TAXI" -> "TRANSFER";
+            case "TUKTUK", "TUK_TUK", "MOTORBIKE", "SCOOTER", "RICKSHAW" -> "TAXI";
+            case "BICYCLE", "BIKE", "CYCLING" -> "WALK";
+            case "RIDESHARE", "RIDE_SHARE", "UBER", "GRAB", "LYFT" -> "TAXI";
+            case "SHUTTLE", "MINIBUS", "VAN", "COACH" -> "BUS";
+            case "WALKING", "ON_FOOT", "FOOT" -> "WALK";
+            case "WALK", "METRO", "BUS", "TRAM", "TRAIN", "TAXI", "CAR", "TRANSFER", "MIXED" -> n;
+            default -> "MIXED";
+        };
     }
 
     private static String mapTimeBlock(String raw) {

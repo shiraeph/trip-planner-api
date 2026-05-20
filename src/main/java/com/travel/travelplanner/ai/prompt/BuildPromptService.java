@@ -283,6 +283,8 @@ public class BuildPromptService {
         return """
                 TRANSPORT
                 - Preference: %s — WALKING→WALK, PUBLIC_TRANSPORT→METRO/BUS/TRAM/TRAIN, TAXI→TAXI, CAR→CAR, MIXED→best per leg.
+                - transit.mode MUST be exactly one of: WALK, METRO, BUS, TRAM, TRAIN, TAXI, CAR, TRANSFER, MIXED
+                  (never BTS, MRT, BOAT, FERRY, etc. — use METRO for rail/subway, TRANSFER for ferries/boats).
                 - Hotel base: %s (%s) — use as default "from" for first activity when relevant.
 
                 """
