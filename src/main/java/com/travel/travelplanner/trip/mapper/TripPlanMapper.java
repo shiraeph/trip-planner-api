@@ -30,6 +30,14 @@ public interface TripPlanMapper {
 
     @Mapping(source = "tripPreferences.travelStyle", target = "travelStyle")
     @Mapping(source = "tripPreferences.budgetLevel", target = "budgetLevel")
+    @Mapping(source = "tripPreferences.interests", target = "interests")
+    @Mapping(source = "tripPreferences.constraints", target = "constraints")
+    @Mapping(source = "tripPreferences.hotelName", target = "hotelName")
+    @Mapping(source = "tripPreferences.hotelAddressOrArea", target = "hotelAddressOrArea")
+    @Mapping(source = "tripPreferences.includeDirections", target = "includeDirections")
+    @Mapping(source = "tripPreferences.transportPreferences", target = "transportPreferences")
+    @Mapping(source = "tripPreferences.freeText", target = "freeText")
+    @Mapping(source = "errorMessage", target = "errorMessage")
     @Mapping(target = "itinerary", expression = "java(mapItinerary(selectItineraryForLanguage(tripPlan, language)))")
     @Mapping(target = "displayLanguage", expression = "java(toApiDisplayLanguage(language))")
     com.travel.travelplanner.trip.api.TripPlanResponse toTripPlanResponseFromTripPlan(

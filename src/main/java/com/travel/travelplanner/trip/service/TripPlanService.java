@@ -176,6 +176,7 @@ public class TripPlanService {
         List<TripPlan> plans = tripPlanRepository.findByUserIdOrderByCreatedAtDesc(userId);
         DisplayLanguage lang = DisplayLanguage.ENGLISH;
         return plans.stream()
+                .filter(p -> p != null && p.getTripStatus() == TripStatus.READY)
                 .map(p -> mapper.toTripPlanResponseFromTripPlan(p, lang))
                 .collect(Collectors.toList());
     }

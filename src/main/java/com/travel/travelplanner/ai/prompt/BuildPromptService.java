@@ -133,6 +133,9 @@ public class BuildPromptService {
                 IMPORTANT: Generate the itinerary in TWO languages: English and Hebrew.
                 Provide the exact same structure under "en" and "he".
                 All content (titles, names, notes, directions) must be in the respective language.
+                NOTE LABELS:
+                - In English ("en") use exactly: "Opening Hours:", "Price:", "Average price per dish:"
+                - In Hebrew ("he") use exactly: "שעות פתיחה:", "מחיר:", "מחיר ממוצע למנה:"
 
                 """
                 .formatted(ctx.destination());
@@ -196,13 +199,21 @@ public class BuildPromptService {
                 - Match budget (%s) and travel style (%s): pace, price level, and energy.
 
                 ITEM DETAIL REQUIREMENTS
-                - ATTRACTION: 2–4 sentences in notes (min ~45 characters). Include:
+                - ATTRACTION: notes MUST be exactly this structure:
+                  Line 1: short description (1–3 sentences).
+                  Line 2: Opening Hours: HH:mm - HH:mm (or "Opening Hours: varies" if truly unknown).
+                  Line 3: Price: <ticket price range> (e.g. "€15-20 per person" or "$0 free").
+                  Then add 1 extra practical tip sentence if needed, but keep the Opening Hours and Price on their own lines.
+                  Also:
                   (a) why this place is worth it for THIS traveler profile,
                   (b) suggested duration,
                   (c) one practical tip (best time, tickets, crowds, dress code, or what to see first).
+                  IMPORTANT: Do not schedule attractions when they are typically closed. If closed on that day, pick another attraction.
                   location.name = neighborhood or address area in %s.
-                - FOOD: Use a real venue name. Notes must include cuisine/style, 1–2 dishes or drinks to order,
-                  and why it fits the area or day (e.g. post-hike lunch, sunset drinks).
+                - FOOD (restaurants/cafés): notes MUST be exactly this structure:
+                  Line 1: short description of the restaurant and cuisine (1–3 sentences) including what to order.
+                  Line 2: Opening Hours: HH:mm - HH:mm
+                  Line 3: Average price per dish: <range> (e.g. "€12-18")
                 - TRANSIT: Clear route; directions name lines/stops/landmarks where possible.
                 - Each block: 2–3 items (one anchor experience + food/transit as needed). Never empty items arrays.
 

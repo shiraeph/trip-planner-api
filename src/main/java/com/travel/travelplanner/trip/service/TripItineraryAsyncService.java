@@ -26,6 +26,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class TripItineraryAsyncService {
     private static final Logger log = LoggerFactory.getLogger(TripItineraryAsyncService.class);
+    private static final int MAX_GENERATION_ATTEMPTS = 2;
+    private static final String FRIENDLY_ERROR_MESSAGE = "Oh no! Something went wrong. Please try again.";
 
     private final ItineraryNormalizer itineraryNormalizer;
     private final ItineraryValidator itineraryValidator;
@@ -37,50 +39,65 @@ public class TripItineraryAsyncService {
         TripPlan plan = tripPlanRepository.findById(tripPlanId)
                 .orElseThrow(() -> new RuntimeException("Trip not found"));
 
-        try {
-            BilingualItinerary bilingual = normalize(plan, gptTripItineraryGenerator.generate(plan));
-            List<String> validation = itineraryValidator.validate(plan, bilingual.getEn());
-            if (validation.isEmpty()) {
-                plan.setItineraryEn(bilingual.getEn());
-                plan.setItineraryHe(bilingual.getHe());
-                plan.setTripStatus(TripStatus.READY);
-                plan.setErrorMessage(null);
-                tripPlanRepository.save(plan);
-                return;
-            }
+        for (int attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
+            try {
+                BilingualItinerary bilingual = normalize(plan, gptTripItineraryGenerator.generate(plan));
+                List<String> validation = itineraryValidator.validate(plan, bilingual.getEn());
+                if (validation.isEmpty()) {
+                    plan.setItineraryEn(bilingual.getEn());
+                    plan.setItineraryHe(bilingual.getHe());
+                    plan.setTripStatus(TripStatus.READY);
+                    plan.setErrorMessage(null);
+                    tripPlanRepository.save(plan);
+                    return;
+                }
 
-            log.warn("Trip {} first itinerary validation failed ({} issues): {}", tripPlanId, validation.size(), validation);
+                log.warn("Trip {} attempt {} validation failed ({} issues): {}", tripPlanId, attempt, validation.size(), validation);
 
-            BilingualItinerary fix = normalize(plan, gptTripItineraryGenerator.generateFix(plan, validation));
-            List<String> secondValidation = itineraryValidator.validate(plan, fix.getEn());
-            if (secondValidation.isEmpty()) {
-                plan.setItineraryEn(fix.getEn());
-                plan.setItineraryHe(fix.getHe());
-                plan.setTripStatus(TripStatus.READY);
-                plan.setErrorMessage(null);
-                tripPlanRepository.save(plan);
-                return;
-            }
+                BilingualItinerary fix = normalize(plan, gptTripItineraryGenerator.generateFix(plan, validation));
+                List<String> secondValidation = itineraryValidator.validate(plan, fix.getEn());
+                if (secondValidation.isEmpty()) {
+                    plan.setItineraryEn(fix.getEn());
+                    plan.setItineraryHe(fix.getHe());
+                    plan.setTripStatus(TripStatus.READY);
+                    plan.setErrorMessage(null);
+                    tripPlanRepository.save(plan);
+                    return;
+                }
 
-            log.warn("Trip {} second itinerary validation failed ({} issues): {}", tripPlanId, secondValidation.size(), secondValidation);
+                log.warn("Trip {} attempt {} second validation failed ({} issues): {}", tripPlanId, attempt, secondValidation.size(), secondValidation);
 
-            BilingualItinerary fix2 = normalize(plan, gptTripItineraryGenerator.generateFix(plan, secondValidation));
-            List<String> thirdValidation = itineraryValidator.validate(plan, fix2.getEn());
-            if (!thirdValidation.isEmpty()) {
+                BilingualItinerary fix2 = normalize(plan, gptTripItineraryGenerator.generateFix(plan, secondValidation));
+                List<String> thirdValidation = itineraryValidator.validate(plan, fix2.getEn());
+                if (thirdValidation.isEmpty()) {
+                    plan.setItineraryEn(fix2.getEn());
+                    plan.setItineraryHe(fix2.getHe());
+                    plan.setTripStatus(TripStatus.READY);
+                    plan.setErrorMessage(null);
+                    tripPlanRepository.save(plan);
+                    return;
+                }
+
+                log.warn("Trip {} attempt {} third validation failed ({} issues): {}", tripPlanId, attempt, thirdValidation.size(), thirdValidation);
+
+                if (attempt < MAX_GENERATION_ATTEMPTS) {
+                    continue;
+                }
+
                 plan.setTripStatus(TripStatus.FAILED);
-                plan.setErrorMessage("AI output failed validation: " + String.join(" \n- ", thirdValidation));
-            } else {
-                plan.setItineraryEn(fix2.getEn());
-                plan.setItineraryHe(fix2.getHe());
-                plan.setTripStatus(TripStatus.READY);
-                plan.setErrorMessage(null);
+                plan.setErrorMessage(FRIENDLY_ERROR_MESSAGE);
+                tripPlanRepository.save(plan);
+                return;
+            } catch (Exception e) {
+                log.error("Trip {} generation attempt {} failed", tripPlanId, attempt, e);
+                if (attempt < MAX_GENERATION_ATTEMPTS) {
+                    continue;
+                }
+                plan.setTripStatus(TripStatus.FAILED);
+                plan.setErrorMessage(FRIENDLY_ERROR_MESSAGE);
+                tripPlanRepository.save(plan);
+                return;
             }
-            tripPlanRepository.save(plan);
-        } catch (Exception e) {
-            log.error("Trip {} generation failed", tripPlanId, e);
-            plan.setTripStatus(TripStatus.FAILED);
-            plan.setErrorMessage(e.getMessage());
-            tripPlanRepository.save(plan);
         }
     }
 
@@ -96,65 +113,80 @@ public class TripItineraryAsyncService {
         List<RegenerateTripRequest.LockedBlock> lockedBlocks = request != null ? request.getLockedBlocks() : null;
         List<RegenerateTripRequest.LockedItem> lockedItems = request != null ? request.getLockedItems() : null;
 
-        try {
-            BilingualItinerary bilingual = normalize(plan, gptTripItineraryGenerator.generate(plan));
-            Itinerary mergedEn = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, bilingual.getEn(), lockedBlocks), lockedItems);
-            Itinerary mergedHe = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, bilingual.getHe(), lockedBlocks), lockedItems);
-            itineraryNormalizer.normalize(plan, mergedEn, false);
-            itineraryNormalizer.normalize(plan, mergedHe, true);
+        for (int attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
+            try {
+                BilingualItinerary bilingual = normalize(plan, gptTripItineraryGenerator.generate(plan));
+                Itinerary mergedEn = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, bilingual.getEn(), lockedBlocks), lockedItems);
+                Itinerary mergedHe = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, bilingual.getHe(), lockedBlocks), lockedItems);
+                itineraryNormalizer.normalize(plan, mergedEn, false);
+                itineraryNormalizer.normalize(plan, mergedHe, true);
 
-            List<String> validation = itineraryValidator.validate(plan, mergedEn);
-            if (validation.isEmpty()) {
-                plan.setItineraryEn(mergedEn);
-                plan.setItineraryHe(mergedHe);
-                plan.setTripStatus(TripStatus.READY);
-                plan.setErrorMessage(null);
-                tripPlanRepository.save(plan);
-                return;
-            }
+                List<String> validation = itineraryValidator.validate(plan, mergedEn);
+                if (validation.isEmpty()) {
+                    plan.setItineraryEn(mergedEn);
+                    plan.setItineraryHe(mergedHe);
+                    plan.setTripStatus(TripStatus.READY);
+                    plan.setErrorMessage(null);
+                    tripPlanRepository.save(plan);
+                    return;
+                }
 
-            log.warn("Trip {} regenerate first validation failed ({} issues): {}", tripPlanId, validation.size(), validation);
+                log.warn("Trip {} regenerate attempt {} validation failed ({} issues): {}", tripPlanId, attempt, validation.size(), validation);
 
-            BilingualItinerary fix = normalize(plan, gptTripItineraryGenerator.generateFix(plan, validation));
-            Itinerary mergedFixEn = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, fix.getEn(), lockedBlocks), lockedItems);
-            Itinerary mergedFixHe = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, fix.getHe(), lockedBlocks), lockedItems);
-            itineraryNormalizer.normalize(plan, mergedFixEn, false);
-            itineraryNormalizer.normalize(plan, mergedFixHe, true);
+                BilingualItinerary fix = normalize(plan, gptTripItineraryGenerator.generateFix(plan, validation));
+                Itinerary mergedFixEn = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, fix.getEn(), lockedBlocks), lockedItems);
+                Itinerary mergedFixHe = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, fix.getHe(), lockedBlocks), lockedItems);
+                itineraryNormalizer.normalize(plan, mergedFixEn, false);
+                itineraryNormalizer.normalize(plan, mergedFixHe, true);
 
-            List<String> secondValidation = itineraryValidator.validate(plan, mergedFixEn);
-            if (secondValidation.isEmpty()) {
-                plan.setItineraryEn(mergedFixEn);
-                plan.setItineraryHe(mergedFixHe);
-                plan.setTripStatus(TripStatus.READY);
-                plan.setErrorMessage(null);
-                tripPlanRepository.save(plan);
-                return;
-            }
+                List<String> secondValidation = itineraryValidator.validate(plan, mergedFixEn);
+                if (secondValidation.isEmpty()) {
+                    plan.setItineraryEn(mergedFixEn);
+                    plan.setItineraryHe(mergedFixHe);
+                    plan.setTripStatus(TripStatus.READY);
+                    plan.setErrorMessage(null);
+                    tripPlanRepository.save(plan);
+                    return;
+                }
 
-            log.warn("Trip {} regenerate second validation failed ({} issues): {}", tripPlanId, secondValidation.size(), secondValidation);
+                log.warn("Trip {} regenerate attempt {} second validation failed ({} issues): {}", tripPlanId, attempt, secondValidation.size(), secondValidation);
 
-            BilingualItinerary fix2 = normalize(plan, gptTripItineraryGenerator.generateFix(plan, secondValidation));
-            Itinerary mergedFix2En = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, fix2.getEn(), lockedBlocks), lockedItems);
-            Itinerary mergedFix2He = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, fix2.getHe(), lockedBlocks), lockedItems);
-            itineraryNormalizer.normalize(plan, mergedFix2En, false);
-            itineraryNormalizer.normalize(plan, mergedFix2He, true);
+                BilingualItinerary fix2 = normalize(plan, gptTripItineraryGenerator.generateFix(plan, secondValidation));
+                Itinerary mergedFix2En = mergeLockedItems(oldEn, mergeLockedBlocks(oldEn, fix2.getEn(), lockedBlocks), lockedItems);
+                Itinerary mergedFix2He = mergeLockedItems(oldHe, mergeLockedBlocks(oldHe, fix2.getHe(), lockedBlocks), lockedItems);
+                itineraryNormalizer.normalize(plan, mergedFix2En, false);
+                itineraryNormalizer.normalize(plan, mergedFix2He, true);
 
-            List<String> thirdValidation = itineraryValidator.validate(plan, mergedFix2En);
-            if (!thirdValidation.isEmpty()) {
+                List<String> thirdValidation = itineraryValidator.validate(plan, mergedFix2En);
+                if (thirdValidation.isEmpty()) {
+                    plan.setItineraryEn(mergedFix2En);
+                    plan.setItineraryHe(mergedFix2He);
+                    plan.setTripStatus(TripStatus.READY);
+                    plan.setErrorMessage(null);
+                    tripPlanRepository.save(plan);
+                    return;
+                }
+
+                log.warn("Trip {} regenerate attempt {} third validation failed ({} issues): {}", tripPlanId, attempt, thirdValidation.size(), thirdValidation);
+
+                if (attempt < MAX_GENERATION_ATTEMPTS) {
+                    continue;
+                }
+
                 plan.setTripStatus(TripStatus.FAILED);
-                plan.setErrorMessage("AI output failed validation: " + String.join(" \n- ", thirdValidation));
-            } else {
-                plan.setItineraryEn(mergedFix2En);
-                plan.setItineraryHe(mergedFix2He);
-                plan.setTripStatus(TripStatus.READY);
-                plan.setErrorMessage(null);
+                plan.setErrorMessage(FRIENDLY_ERROR_MESSAGE);
+                tripPlanRepository.save(plan);
+                return;
+            } catch (Exception e) {
+                log.error("Trip {} regenerate attempt {} failed", tripPlanId, attempt, e);
+                if (attempt < MAX_GENERATION_ATTEMPTS) {
+                    continue;
+                }
+                plan.setTripStatus(TripStatus.FAILED);
+                plan.setErrorMessage(FRIENDLY_ERROR_MESSAGE);
+                tripPlanRepository.save(plan);
+                return;
             }
-            tripPlanRepository.save(plan);
-        } catch (Exception e) {
-            log.error("Trip {} regenerate failed", tripPlanId, e);
-            plan.setTripStatus(TripStatus.FAILED);
-            plan.setErrorMessage(e.getMessage());
-            tripPlanRepository.save(plan);
         }
     }
 
