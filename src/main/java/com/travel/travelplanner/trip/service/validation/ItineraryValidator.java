@@ -96,10 +96,30 @@ public class ItineraryValidator {
                                 "Constraint violated (avoid museums). Item: " + safe(item.getName())));
                     }
 
-                    // rule: attraction notes must be detailed enough
+                    // rule: attraction notes must be detailed enough (description only)
                     if (isAttraction(item) && notesTooShort(item.getNotes())) {
                         violations.add(msg(d, block.getTimeBlock(), i,
                                 "ATTRACTION notes too short (need more detail). Item: " + safe(item.getName())));
+                    }
+                    if (isAttraction(item) && isBlank(item.getOpeningHours())) {
+                        violations.add(msg(d, block.getTimeBlock(), i,
+                                "ATTRACTION missing openingHours field. Item: " + safe(item.getName())));
+                    }
+                    if (isAttraction(item) && isBlank(item.getPrice())) {
+                        violations.add(msg(d, block.getTimeBlock(), i,
+                                "ATTRACTION missing price field. Item: " + safe(item.getName())));
+                    }
+                    if (isFood(item) && foodNotesTooShort(item.getNotes())) {
+                        violations.add(msg(d, block.getTimeBlock(), i,
+                                "FOOD notes too short (need more detail). Item: " + safe(item.getName())));
+                    }
+                    if (isFood(item) && isBlank(item.getOpeningHours())) {
+                        violations.add(msg(d, block.getTimeBlock(), i,
+                                "FOOD missing openingHours field. Item: " + safe(item.getName())));
+                    }
+                    if (isFood(item) && isBlank(item.getAveragePricePerDish())) {
+                        violations.add(msg(d, block.getTimeBlock(), i,
+                                "FOOD missing averagePricePerDish field. Item: " + safe(item.getName())));
                     }
                 }
             }
@@ -153,13 +173,23 @@ public class ItineraryValidator {
         return item.getType() == ItineraryItemType.ATTRACTION;
     }
 
-    /** Chunked GPT output often uses one-line notes; normalizer pads shorter text before validation. */
-    private static final int MIN_ATTRACTION_NOTES_LEN = 28;
+    private boolean isFood(ItineraryItem item) {
+        return item.getType() == ItineraryItemType.FOOD;
+    }
+
+    /** Description-only notes; hours/price live in separate fields. */
+    private static final int MIN_ATTRACTION_NOTES_LEN = 80;
+    private static final int MIN_FOOD_NOTES_LEN = 60;
 
     private boolean notesTooShort(String notes) {
         if (notes == null) return true;
         String t = notes.trim();
         return t.length() < MIN_ATTRACTION_NOTES_LEN;
+    }
+
+    private boolean foodNotesTooShort(String notes) {
+        if (notes == null) return true;
+        return notes.trim().length() < MIN_FOOD_NOTES_LEN;
     }
 
 

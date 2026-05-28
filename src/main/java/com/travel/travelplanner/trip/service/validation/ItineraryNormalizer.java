@@ -31,8 +31,8 @@ public class ItineraryNormalizer {
             TimeBlock.MORNING, TimeBlock.AFTERNOON, TimeBlock.EVENING
     };
 
-    /** Must match {@link ItineraryValidator} minimum for ATTRACTION notes. */
-    private static final int MIN_ATTRACTION_NOTES_LEN = 28;
+    /** Must match {@link ItineraryValidator} minimum for ATTRACTION description notes. */
+    private static final int MIN_ATTRACTION_NOTES_LEN = 80;
 
     public void normalize(TripPlan tripPlan, Itinerary itinerary, boolean hebrew) {
         if (itinerary == null || itinerary.getDayPlans() == null) {

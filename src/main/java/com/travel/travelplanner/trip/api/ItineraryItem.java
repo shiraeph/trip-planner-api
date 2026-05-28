@@ -16,5 +16,8 @@ public class ItineraryItem {
     private String name;
     private Location location;
     private String notes;
+    private String openingHours;
+    private String price;
+    private String averagePricePerDish;
     private TransitInfo transit;
 }

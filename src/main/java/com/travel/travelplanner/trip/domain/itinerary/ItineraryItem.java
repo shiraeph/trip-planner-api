@@ -16,6 +16,12 @@ public class ItineraryItem {
     private String name;
     private Location location;
     private String notes;
+    /** Typical opening hours for the venue (e.g. "09:00 - 18:00"). */
+    private String openingHours;
+    /** Ticket or entry price for attractions (e.g. "€15-20 per person"). */
+    private String price;
+    /** Average price per dish for restaurants (e.g. "€12-18"). */
+    private String averagePricePerDish;
     private String timeHint;
     private Integer durationMinutes;
     private TransitInfo transit;
