@@ -1,5 +1,7 @@
 package com.travel.travelplanner.ai.jackson;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Locale;
 
 import com.travel.travelplanner.ai.dto.BilingualItinerary;
@@ -17,13 +19,83 @@ public final class GptItineraryJsonRepair {
     }
 
     public static BilingualItinerary parse(ObjectMapper mapper, String json) {
-        try {
-            JsonNode root = mapper.readTree(json);
-            repair(root);
-            return mapper.treeToValue(root, BilingualItinerary.class);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to parse GPT response into BilingualItinerary. Raw:\n" + json, e);
+        String normalized = normalizeRawJson(json);
+        Exception lastError = null;
+        for (String candidate : new String[] { normalized, closeTruncatedJson(normalized) }) {
+            try {
+                JsonNode root = mapper.readTree(candidate);
+                repair(root);
+                return mapper.treeToValue(root, BilingualItinerary.class);
+            } catch (Exception e) {
+                lastError = e;
+            }
         }
+        throw new RuntimeException("Failed to parse GPT response into BilingualItinerary. Raw:\n" + normalized, lastError);
+    }
+
+    /**
+     * Strips markdown fences and keeps the outermost JSON object from the model output.
+     */
+    public static String normalizeRawJson(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("```")) {
+            trimmed = trimmed.replaceFirst("^```[a-zA-Z]*\\s*", "");
+            trimmed = trimmed.replaceFirst("\\s*```\\s*$", "");
+            trimmed = trimmed.trim();
+        }
+        int start = trimmed.indexOf('{');
+        if (start < 0) {
+            return trimmed;
+        }
+        return trimmed.substring(start).trim();
+    }
+
+    /**
+     * Closes any unbalanced strings/brackets when the model hits its output token limit mid-JSON.
+     */
+    static String closeTruncatedJson(String json) {
+        if (json == null || json.isBlank()) {
+            return json;
+        }
+        boolean inString = false;
+        boolean escape = false;
+        Deque<Character> stack = new ArrayDeque<>();
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inString) {
+                if (escape) {
+                    escape = false;
+                } else if (c == '\\') {
+                    escape = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+                continue;
+            }
+            if (c == '{' || c == '[') {
+                stack.push(c);
+            } else if (c == '}' && !stack.isEmpty() && stack.peek() == '{') {
+                stack.pop();
+            } else if (c == ']' && !stack.isEmpty() && stack.peek() == '[') {
+                stack.pop();
+            }
+        }
+        StringBuilder repaired = new StringBuilder(json);
+        if (inString) {
+            repaired.append('"');
+        }
+        while (!stack.isEmpty()) {
+            char open = stack.pop();
+            repaired.append(open == '{' ? '}' : ']');
+        }
+        return repaired.toString();
     }
 
     static void repair(JsonNode root) {

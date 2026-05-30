@@ -3,17 +3,20 @@ package com.travel.travelplanner.trip.service.generator;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import com.travel.travelplanner.ai.dto.BilingualItinerary;
 import com.travel.travelplanner.ai.jackson.GptItineraryJsonRepair;
+import com.travel.travelplanner.ai.openai.OpenAiModelCapabilities;
 import com.travel.travelplanner.ai.openai.dto.OpenAiChatRequest;
 import com.travel.travelplanner.ai.openai.dto.OpenAiChatResponse;
 import com.travel.travelplanner.ai.openai.dto.OpenAiMessage;
@@ -39,13 +42,13 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
     @Value("${openai.model}")
     private String model;
 
-    @Value("${openai.max-tokens:16384}")
+    @Value("${openai.max-tokens:32768}")
     private int configuredMaxTokens;
 
-    @Value("${trip.itinerary.chunk-threshold-days:9}")
+    @Value("${trip.itinerary.chunk-threshold-days:6}")
     private int chunkThresholdDays;
 
-    @Value("${trip.itinerary.chunk-size-days:7}")
+    @Value("${trip.itinerary.chunk-size-days:3}")
     private int chunkSizeDays;
 
     @Override
@@ -53,7 +56,7 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
         if (shouldChunk(tripPlan)) {
             return generateChunked(tripPlan);
         }
-        return generateSinglePass(tripPlan, buildPromptService.buildPrompt(tripPlan));
+        return generateSinglePass(tripPlan, buildPromptService.buildPrompt(tripPlan), TripDates.inclusiveDayCount(tripPlan));
     }
 
     @Override
@@ -64,7 +67,7 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
             return generateChunked(tripPlan);
         }
         String fixPrompt = buildPromptService.buildFixPrompt(tripPlan, violations);
-        return generateSinglePass(tripPlan, fixPrompt);
+        return generateSinglePass(tripPlan, fixPrompt, TripDates.inclusiveDayCount(tripPlan));
     }
 
     private boolean shouldChunk(TripPlan tripPlan) {
@@ -76,8 +79,8 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
         List<List<LocalDate>> chunks = TripDates.chunk(allDates, chunkSizeDays);
         int totalChunks = chunks.size();
 
-        log.info("Generating {}-day trip in {} chunk(s) of up to {} days each",
-                allDates.size(), totalChunks, chunkSizeDays);
+        log.info("Generating {}-day trip in {} chunk(s) of up to {} days each (model={})",
+                allDates.size(), totalChunks, chunkSizeDays, model);
 
         Itinerary en = new Itinerary();
         en.setDayPlans(new ArrayList<>());
@@ -102,15 +105,10 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
                 he.getDayPlans().addAll(chunk.getHe().getDayPlans());
             }
 
-            continuityHint = ChunkContinuityBuilder.build(chunk.getEn());
+            continuityHint = ChunkContinuityBuilder.build(en);
         }
 
         return new BilingualItinerary(en, he);
-    }
-
-    private BilingualItinerary generateSinglePass(TripPlan tripPlan, String prompt) {
-        int days = TripDates.inclusiveDayCount(tripPlan);
-        return generateSinglePass(tripPlan, prompt, days);
     }
 
     private BilingualItinerary generateSinglePass(TripPlan tripPlan, String prompt, int daysInPass) {
@@ -119,13 +117,23 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
     }
 
     private String callGpt(TripPlan tripPlan, String prompt, int daysInPass) {
+        int tokenLimit = resolveMaxTokens(daysInPass);
         OpenAiChatRequest request = new OpenAiChatRequest();
         request.setModel(model);
-        request.setTemperature(0.35);
-        request.setMaxTokens(resolveMaxTokens(daysInPass));
+        if (OpenAiModelCapabilities.usesMaxCompletionTokens(model)) {
+            request.setMaxCompletionTokens(tokenLimit);
+        } else {
+            request.setMaxTokens(tokenLimit);
+        }
+        if (OpenAiModelCapabilities.supportsTemperature(model)) {
+            request.setTemperature(0.35);
+        }
+        request.setResponseFormat(Map.of("type", "json_object"));
         request.setMessages(List.of(
                 new OpenAiMessage("system", buildPromptService.buildSystemMessage(tripPlan)),
                 new OpenAiMessage("user", prompt)));
+
+        long startedAt = System.currentTimeMillis();
         OpenAiChatResponse response;
         try {
             response = openAiWebClient.post()
@@ -139,36 +147,27 @@ public class GptTripItineraryGenerator implements TripItineraryGenerator {
             log.error("OpenAI status: {} body: {}", e.getStatusCode(), e.getResponseBodyAsString());
             throw e;
         }
+
+        long elapsedMs = System.currentTimeMillis() - startedAt;
+        if (Objects.nonNull(response) && !CollectionUtils.isEmpty(response.getChoices())) {
+            String finishReason = response.getChoices().get(0).getFinishReason();
+            if ("length".equals(finishReason)) {
+                log.warn("OpenAI bilingual pass truncated (finish_reason=length) for {} days; tokenLimit={}",
+                        daysInPass, tokenLimit);
+            }
+        }
+        log.info("OpenAI model={} bilingual pass ({} days, {} tokens cap) completed in {}ms",
+                model, daysInPass, tokenLimit, elapsedMs);
+
         String json = Objects.nonNull(response) ? response.firstContent() : null;
         if (Objects.isNull(json)) {
             throw new RuntimeException("GPT returned empty response");
         }
-        return sanitizeToJsonObject(json);
+        return GptItineraryJsonRepair.normalizeRawJson(json);
     }
 
     private int resolveMaxTokens(int daysInPass) {
-        // ~1.8k tokens per day leaves room for detailed bilingual notes per item.
-        int estimated = 2800 + Math.max(daysInPass, 1) * 1800;
+        int estimated = 3200 + Math.max(daysInPass, 1) * 3000;
         return Math.min(configuredMaxTokens, Math.max(estimated, 4096));
-    }
-
-    private String sanitizeToJsonObject(String raw) {
-        if (Objects.isNull(raw)) {
-            return null;
-        }
-        String trimRaw = raw.trim();
-        if (trimRaw.startsWith("```")) {
-            trimRaw = trimRaw.replaceFirst("^```[a-zA-Z]*\\s*", "");
-            trimRaw = trimRaw.replaceFirst("\\s*```\\s*$", "");
-            trimRaw = trimRaw.trim();
-        }
-
-        int start = trimRaw.indexOf('{');
-        int end = trimRaw.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            return trimRaw.substring(start, end + 1).trim();
-        }
-
-        return trimRaw.trim();
     }
 }
