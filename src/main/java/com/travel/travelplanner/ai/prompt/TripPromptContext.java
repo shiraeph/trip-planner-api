@@ -46,7 +46,7 @@ record TripPromptContext(
         String interests = tripPlan.getTripPreferences() != null
                 && tripPlan.getTripPreferences().getInterests() != null
                 && !tripPlan.getTripPreferences().getInterests().isEmpty()
-                        ? String.join(", ", tripPlan.getTripPreferences().getInterests())
+                        ? InterestLabels.format(tripPlan.getTripPreferences().getInterests())
                         : "none";
 
         String constraints = tripPlan.getTripPreferences() != null

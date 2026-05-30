@@ -5,6 +5,7 @@ import java.util.Deque;
 import java.util.Locale;
 
 import com.travel.travelplanner.ai.dto.BilingualItinerary;
+import com.travel.travelplanner.trip.domain.itinerary.Itinerary;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -31,6 +32,60 @@ public final class GptItineraryJsonRepair {
             }
         }
         throw new RuntimeException("Failed to parse GPT response into BilingualItinerary. Raw:\n" + normalized, lastError);
+    }
+
+    /** Parses English-only output: root dayPlans array or { "en": { dayPlans } }. */
+    public static Itinerary parseEnglish(ObjectMapper mapper, String json) {
+        String normalized = normalizeRawJson(json);
+        Exception lastError = null;
+        for (String candidate : new String[] { normalized, closeTruncatedJson(normalized) }) {
+            try {
+                JsonNode root = mapper.readTree(candidate);
+                JsonNode itineraryNode = unwrapItineraryNode(root, "en");
+                repairItinerary(itineraryNode);
+                Itinerary itinerary = mapper.treeToValue(itineraryNode, Itinerary.class);
+                if (itinerary != null && itinerary.getDayPlans() != null) {
+                    return itinerary;
+                }
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+        throw new RuntimeException("Failed to parse GPT response into English Itinerary. Raw:\n" + normalized, lastError);
+    }
+
+    /** Parses Hebrew translation output: root dayPlans array or { "he": { dayPlans } }. */
+    public static Itinerary parseHebrew(ObjectMapper mapper, String json) {
+        String normalized = normalizeRawJson(json);
+        Exception lastError = null;
+        for (String candidate : new String[] { normalized, closeTruncatedJson(normalized) }) {
+            try {
+                JsonNode root = mapper.readTree(candidate);
+                JsonNode itineraryNode = unwrapItineraryNode(root, "he");
+                repairItinerary(itineraryNode);
+                Itinerary itinerary = mapper.treeToValue(itineraryNode, Itinerary.class);
+                if (itinerary != null && itinerary.getDayPlans() != null) {
+                    return itinerary;
+                }
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+        throw new RuntimeException("Failed to parse GPT response into Hebrew Itinerary. Raw:\n" + normalized, lastError);
+    }
+
+    private static JsonNode unwrapItineraryNode(JsonNode root, String langKey) {
+        if (root == null || !root.isObject()) {
+            throw new IllegalArgumentException("Expected JSON object");
+        }
+        if (root.has("dayPlans")) {
+            return root;
+        }
+        JsonNode lang = root.get(langKey);
+        if (lang != null && lang.isObject()) {
+            return lang;
+        }
+        return root;
     }
 
     /**

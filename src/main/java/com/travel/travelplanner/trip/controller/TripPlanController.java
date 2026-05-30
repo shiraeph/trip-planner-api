@@ -51,9 +51,10 @@ public class TripPlanController {
     @GetMapping("/{id}")
     public TripPlanResponse getPlan(
             @PathVariable String id,
-            @RequestParam(required = false) String language) {
+            @RequestParam(required = false) String language,
+            @RequestParam(required = false) String view) {
         DisplayLanguage lang = parseLanguage(language);
-        return service.getPlan(id, lang);
+        return service.getPlan(id, lang, view);
     }
 
     @PostMapping("/{id}/regenerate")

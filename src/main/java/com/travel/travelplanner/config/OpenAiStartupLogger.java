@@ -29,6 +29,12 @@ public class OpenAiStartupLogger {
     @Value("${trip.itinerary.chunk-size-days:3}")
     private int chunkSizeDays;
 
+    @Value("${trip.itinerary.split-languages:true}")
+    private boolean splitLanguages;
+
+    @Value("${openai.translation.model:${openai.model}}")
+    private String translationModel;
+
     public OpenAiStartupLogger(Environment environment) {
         this.environment = environment;
     }
@@ -42,13 +48,17 @@ public class OpenAiStartupLogger {
                 """
                 OpenAI (local profile):
                   model={}
+                  translationModel={}
                   maxTokens={}
                   chunkThresholdDays={}
                   chunkSizeDays={}
+                  splitLanguages={}
                 """,
                 model,
+                translationModel,
                 maxTokens,
                 chunkThresholdDays,
-                chunkSizeDays);
+                chunkSizeDays,
+                splitLanguages);
     }
 }

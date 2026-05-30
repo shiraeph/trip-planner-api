@@ -38,6 +38,7 @@ public class TripPlanResponse {
     private DisplayLanguage displayLanguage;
     private TripStatus tripStatus;
     private String errorMessage;
+    private GenerationProgressResponse generationProgress;
     private Instant createdAt;
     private Instant updatedAt;
 }

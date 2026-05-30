@@ -124,11 +124,17 @@ public class TripPlanService {
     }
 
     public TripPlanResponse getPlan(String id, DisplayLanguage language) {
+        return getPlan(id, language, null);
+    }
+
+    public TripPlanResponse getPlan(String id, DisplayLanguage language, String view) {
         String userId = requireUserId();
         TripPlan plan = tripPlanRepository.findByUserIdAndId(userId, id)
                 .orElseThrow(() -> new RuntimeException("plan not found: " + id));
         DisplayLanguage lang = language != null ? language : (plan.getDisplayLanguage() != null ? plan.getDisplayLanguage() : DisplayLanguage.ENGLISH);
-        return mapper.toTripPlanResponseFromTripPlan(plan, lang);
+        TripPlanResponse response = mapper.toTripPlanResponseFromTripPlan(plan, lang);
+        TripPlanResponseFilter.applyGeneratingView(response, view);
+        return response;
     }
 
     public TripPlanResponse updateItinerary(String id, DisplayLanguage language, Itinerary body) {

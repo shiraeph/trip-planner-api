@@ -26,6 +26,7 @@ public interface TripPlanMapper {
     @Mapping(target = "displayLanguage", ignore = true)
     @Mapping(target = "aiRawResponse", ignore = true)
     @Mapping(target = "errorMessage", ignore = true)
+    @Mapping(target = "generationProgress", ignore = true)
     com.travel.travelplanner.trip.domain.TripPlan toTripPlanDMNFromRequest(com.travel.travelplanner.trip.api.PlanTripRequest planTripRequest);
 
     @Mapping(source = "tripPreferences.travelStyle", target = "travelStyle")
@@ -40,6 +41,7 @@ public interface TripPlanMapper {
     @Mapping(source = "errorMessage", target = "errorMessage")
     @Mapping(target = "itinerary", expression = "java(mapItinerary(selectItineraryForLanguage(tripPlan, language)))")
     @Mapping(target = "displayLanguage", expression = "java(toApiDisplayLanguage(language))")
+    @Mapping(target = "generationProgress", expression = "java(mapGenerationProgress(tripPlan.getGenerationProgress()))")
     com.travel.travelplanner.trip.api.TripPlanResponse toTripPlanResponseFromTripPlan(
             com.travel.travelplanner.trip.domain.TripPlan tripPlan,
             @Context com.travel.travelplanner.trip.domain.enums.DisplayLanguage language);
@@ -70,6 +72,24 @@ public interface TripPlanMapper {
         if (useHebrew && he != null) return he;
         if (!useHebrew && en != null) return en;
         return plan.getItinerary();
+    }
+
+    default com.travel.travelplanner.trip.api.GenerationProgressResponse mapGenerationProgress(
+            com.travel.travelplanner.trip.domain.GenerationProgress progress) {
+        if (progress == null) {
+            return null;
+        }
+        com.travel.travelplanner.trip.api.GenerationProgressResponse response =
+                new com.travel.travelplanner.trip.api.GenerationProgressResponse();
+        if (progress.getStage() != null) {
+            response.setStage(com.travel.travelplanner.trip.api.enums.GenerationStage.valueOf(
+                    progress.getStage().name()));
+        }
+        response.setChunksCompleted(progress.getChunksCompleted());
+        response.setTotalChunks(progress.getTotalChunks());
+        response.setDaysCompleted(progress.getDaysCompleted());
+        response.setTotalDays(progress.getTotalDays());
+        return response;
     }
 
     default com.travel.travelplanner.trip.api.enums.DisplayLanguage toApiDisplayLanguage(

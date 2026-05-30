@@ -8,6 +8,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
+import org.apache.catalina.connector.ClientAbortException;
+import org.springframework.http.converter.HttpMessageNotWritableException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -68,8 +71,45 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
     }
 
+    @ExceptionHandler({
+            ClientAbortException.class,
+            AsyncRequestNotUsableException.class
+    })
+    public void handleClientAbort(Exception ex) {
+        // Browser cancelled the poll (navigation, new request, tab close) — not a server bug.
+        log.debug("Client disconnected before response completed: {}", ex.getMessage());
+    }
+
+    @ExceptionHandler(HttpMessageNotWritableException.class)
+    public void handleNotWritable(HttpMessageNotWritableException ex) {
+        if (isClientDisconnect(ex)) {
+            log.debug("Client disconnected during response write: {}", ex.getMessage());
+            return;
+        }
+        log.error("Failed to write HTTP response", ex);
+    }
+
+    private static boolean isClientDisconnect(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof ClientAbortException || t instanceof AsyncRequestNotUsableException) {
+                return true;
+            }
+            if (t instanceof java.io.IOException io) {
+                String msg = io.getMessage();
+                if (msg != null && (msg.contains("Broken pipe") || msg.contains("Connection reset"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, String>> handleGeneric(Exception ex) {
+        if (isClientDisconnect(ex)) {
+            log.debug("Client disconnected: {}", ex.getMessage());
+            return ResponseEntity.noContent().build();
+        }
         log.error("Unhandled exception", ex);
         Map<String, String> body = new LinkedHashMap<>();
         body.put("message", "Internal server error");

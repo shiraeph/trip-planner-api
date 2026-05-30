@@ -16,48 +16,153 @@ import com.travel.travelplanner.trip.service.TripDates;
 @Service
 public class BuildPromptService {
 
+    /**
+     * Stable instruction prefix for bilingual single-pass (legacy / split-languages=false).
+     */
     public String buildSystemMessage(TripPlan tripPlan) {
-        String destination = tripPlan.getDestination() != null ? tripPlan.getDestination() : "the destination";
-        String dates = formatDateRange(tripPlan);
-        return """
-                You are an expert professional travel planner for %s.
-                You plan like a destination specialist: exact dates, season, local holidays, festivals, and time-sensitive events matter.
-                Trip dates: %s — every day must reflect what is actually happening then, not a generic year-round template.
-                Use real venue names and concrete details — never generic filler.
-                Return ONLY valid JSON (no markdown, no commentary).
-                """
-                .formatted(destination, dates);
+        return buildSystemMessageBilingual(tripPlan);
     }
 
+    /** Stable English planning prefix — identical across chunks for prompt caching. */
+    public String buildSystemMessageEnglish(TripPlan tripPlan) {
+        int tripDays = TripDates.inclusiveDayCount(tripPlan);
+        List<LocalDate> calendar = TripDates.eachDay(tripPlan);
+        String dateList = calendar.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
+        TripPromptContext ctx = TripPromptContext.from(tripPlan, dateList, tripDays);
+        String destination = ctx.destination() != null ? ctx.destination() : "the destination";
+
+        return """
+                You are an expert professional travel planner for %s.
+                Trip dates: %s to %s (%d days). Every day must reflect season, holidays, and local events — not a generic template.
+                Use real venue names and concrete details — never generic filler.
+
+                OUTPUT: Return ONLY valid JSON (no markdown, no commentary). Match the schema exactly.
+                Generate the itinerary in English only.
+
+                """
+                .formatted(destination, ctx.start(), ctx.end(), tripDays)
+                + preferencesBlock(ctx)
+                + trekkingGuidanceBlock(tripPlan)
+                + qualityBarBlock(ctx)
+                + dateAwarenessRulesBlock()
+                + hardRulesBaseBlockEnglish(ctx)
+                + transportRulesBlock(ctx)
+                + englishJsonSchemaBlock();
+    }
+
+    /** Stable Hebrew translation prefix. */
+    public String buildSystemMessageHebrewTranslation(TripPlan tripPlan) {
+        String destination = tripPlan.getDestination() != null ? tripPlan.getDestination() : "the destination";
+        return """
+                You are a professional Hebrew translator for travel itineraries in %s.
+                You receive a complete English itinerary JSON and translate it to Hebrew.
+
+                OUTPUT: Return ONLY valid JSON (no markdown, no commentary). Match the schema exactly.
+                Preserve IDENTICAL structure: same number of dayPlans, blocks, and items in the same order.
+                Preserve every date, timeBlock, item type, transit.mode, and estimatedMinutes exactly.
+                Translate to Hebrew: day titles, item names (use Hebrew for generic places; keep well-known proper names recognizable),
+                notes, openingHours text, price strings, averagePricePerDish strings, location.name, transit.from, transit.directions.
+                Do NOT add, remove, or reorder days, blocks, or items.
+
+                """
+                .formatted(destination)
+                + hebrewJsonSchemaBlock();
+    }
+
+    private String buildSystemMessageBilingual(TripPlan tripPlan) {
+        int tripDays = TripDates.inclusiveDayCount(tripPlan);
+        List<LocalDate> calendar = TripDates.eachDay(tripPlan);
+        String dateList = calendar.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
+        TripPromptContext ctx = TripPromptContext.from(tripPlan, dateList, tripDays);
+        String destination = ctx.destination() != null ? ctx.destination() : "the destination";
+
+        return """
+                You are an expert professional travel planner for %s.
+                Trip dates: %s to %s (%d days). Every day must reflect season, holidays, and local events — not a generic template.
+                Use real venue names and concrete details — never generic filler.
+
+                OUTPUT: Return ONLY valid JSON (no markdown, no commentary). Match the schema exactly.
+                Generate the itinerary in TWO languages: English ("en") and Hebrew ("he") with identical structure.
+                All content (titles, names, notes, openingHours, price fields, directions) must be in the respective language.
+
+                """
+                .formatted(destination, ctx.start(), ctx.end(), tripDays)
+                + preferencesBlock(ctx)
+                + trekkingGuidanceBlock(tripPlan)
+                + qualityBarBlock(ctx)
+                + dateAwarenessRulesBlock()
+                + hardRulesBaseBlock(ctx)
+                + transportRulesBlock(ctx)
+                + jsonSchemaBlock();
+    }
+
+    /** User message for English single-pass generation. */
+    public String buildPromptEnglish(TripPlan tripPlan) {
+        int tripDays = TripDates.inclusiveDayCount(tripPlan);
+        List<LocalDate> calendar = TripDates.eachDay(tripPlan);
+        String dateList = calendar.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
+        TripPromptContext ctx = TripPromptContext.from(tripPlan, dateList, tripDays);
+
+        return tripInputBlock(ctx, tripDays, tripDays, dateList)
+                + dateAwarenessCalendarBlock(tripPlan, calendar, ctx)
+                + hardRulesScopeBlockEnglish(ctx, tripDays, ctx.start(), ctx.end(), false, 0, 0, 0)
+                + "\nGenerate the English itinerary for all dates above.\n";
+    }
+
+    /** User message for a single-pass (≤ threshold days) bilingual generation. */
     public String buildPrompt(TripPlan tripPlan) {
         int tripDays = TripDates.inclusiveDayCount(tripPlan);
         List<LocalDate> calendar = TripDates.eachDay(tripPlan);
         String dateList = calendar.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
         TripPromptContext ctx = TripPromptContext.from(tripPlan, dateList, tripDays);
 
-        return header(ctx)
-                + tripInputBlock(ctx, tripDays, tripDays, dateList)
-                + dateAwarenessAndEventsBlock(tripPlan, calendar, ctx)
-                + preferencesBlock(ctx)
-                + hardRulesBlock(ctx, tripDays, ctx.start(), ctx.end(), false, 0, 0, 0)
-                + qualityBarBlock(ctx, false)
-                + transportRulesBlock(ctx)
-                + jsonSchemaBlock()
-                + "\nNow generate the bilingual itinerary that satisfies all rules.\n";
+        return tripInputBlock(ctx, tripDays, tripDays, dateList)
+                + dateAwarenessCalendarBlock(tripPlan, calendar, ctx)
+                + hardRulesScopeBlock(ctx, tripDays, ctx.start(), ctx.end(), false, 0, 0, 0)
+                + "\nGenerate the bilingual itinerary for all dates above.\n";
     }
 
-    public String buildFixPrompt(TripPlan tripPlan, List<String> violations) {
-        String problems = String.join("\n - ", violations);
-        return buildPrompt(tripPlan)
-                + """
+    public String buildChunkPromptEnglish(
+            TripPlan tripPlan,
+            List<LocalDate> chunkDates,
+            int chunkIndex,
+            int totalChunks,
+            String continuityHint) {
+        int totalTripDays = TripDates.inclusiveDayCount(tripPlan);
+        int chunkDays = chunkDates.size();
+        String chunkDateList = chunkDates.stream().map(LocalDate::toString).collect(Collectors.joining(", "));
+        String chunkStart = chunkDates.get(0).toString();
+        String chunkEnd = chunkDates.get(chunkDates.size() - 1).toString();
+        int tripDayStart = dayIndex(tripPlan, chunkDates.get(0));
+        int tripDayEnd = dayIndex(tripPlan, chunkDates.get(chunkDates.size() - 1));
 
-                IMPORTANT: Your previous attempt violated these rules. Fix them and regenerate the FULL bilingual itinerary JSON (both "en" and "he").
-                Violations:
-                - %s
+        TripPromptContext ctx = TripPromptContext.from(tripPlan, chunkDateList, chunkDays);
 
-                Return ONLY the corrected JSON, matching the schema exactly.
+        String continuity = (continuityHint == null || continuityHint.isBlank())
+                ? ""
+                : continuityHint + "\n";
+
+        String chunkArc = chunkArcBlock(chunkIndex, totalChunks, tripDayStart, tripDayEnd, totalTripDays, ctx.destination());
+
+        return """
+                THIS CHUNK ONLY (STRICT)
+                - Chunk %d of %d — trip days %d–%d of %d.
+                - Output dayPlans for exactly these %d dates: %s
+                - Date range: %s to %s
+                - dayPlans must have exactly %d entries — no more, no less.
+                - Do NOT include days outside this chunk.
+                - Same quality standard as chunk 1 — no shortcuts or vaguer descriptions.
+
+                %s
+                %s
                 """
-                        .formatted(problems);
+                        .formatted(
+                                chunkIndex, totalChunks, tripDayStart, tripDayEnd, totalTripDays,
+                                chunkDays, chunkDateList, chunkStart, chunkEnd, chunkDays,
+                                continuity, chunkArc)
+                + dateAwarenessCalendarBlock(tripPlan, chunkDates, ctx)
+                + hardRulesScopeBlockEnglish(ctx, chunkDays, chunkStart, chunkEnd, true, chunkIndex, totalChunks, tripDayStart)
+                + "\nGenerate the English itinerary for this chunk only.\n";
     }
 
     public String buildChunkPrompt(
@@ -82,43 +187,36 @@ public class BuildPromptService {
 
         String chunkArc = chunkArcBlock(chunkIndex, totalChunks, tripDayStart, tripDayEnd, totalTripDays, ctx.destination());
 
-        return header(ctx)
-                + """
-                FULL TRIP (context)
-                - Destination: %s
-                - Overall dates: %s to %s (%d days total)
-                - Group: %s
-                - Travel style: %s, Budget: %s
-                - Interests: %s
-                - Constraints: %s
-                - Hotel: %s (%s), Transport: %s, Include directions: %s
-                - Free text: %s
-
+        return """
                 THIS CHUNK ONLY (STRICT)
                 - Chunk %d of %d — trip days %d–%d of %d.
                 - Output dayPlans for exactly these %d dates: %s
                 - Date range: %s to %s
                 - en.dayPlans and he.dayPlans must each have exactly %d entries — no more, no less.
                 - Do NOT include days outside this chunk.
+                - Same quality standard as chunk 1 — no shortcuts or vaguer descriptions.
 
                 %s
                 %s
                 """
                         .formatted(
-                                ctx.destination(), ctx.start(), ctx.end(), totalTripDays,
-                                ctx.groupSummary(), ctx.travelStyle(), ctx.budget(),
-                                ctx.interests(), ctx.constraints(),
-                                ctx.hotelName(), ctx.hotelAddress(), ctx.transportPref(),
-                                ctx.includeDirections(), ctx.freeText(),
                                 chunkIndex, totalChunks, tripDayStart, tripDayEnd, totalTripDays,
                                 chunkDays, chunkDateList, chunkStart, chunkEnd, chunkDays,
                                 continuity, chunkArc)
-                + dateAwarenessAndEventsBlock(tripPlan, chunkDates, ctx)
-                + hardRulesBlock(ctx, chunkDays, chunkStart, chunkEnd, true, chunkIndex, totalChunks, tripDayStart)
-                + qualityBarBlock(ctx, true)
-                + transportRulesBlock(ctx)
-                + jsonSchemaBlock()
-                + "\nGenerate the bilingual itinerary for this chunk only. Same quality as a 3-day trip — no shortcuts.\n";
+                + dateAwarenessCalendarBlock(tripPlan, chunkDates, ctx)
+                + hardRulesScopeBlock(ctx, chunkDays, chunkStart, chunkEnd, true, chunkIndex, totalChunks, tripDayStart)
+                + "\nGenerate the bilingual itinerary for this chunk only.\n";
+    }
+
+    public String buildHebrewTranslationPrompt(String englishItineraryJson, int daysInPass) {
+        return """
+                Translate the following English itinerary JSON to Hebrew.
+                Output exactly %d dayPlans — same dates and structure as the English input.
+
+                ENGLISH ITINERARY:
+                %s
+                """
+                .formatted(daysInPass, englishItineraryJson);
     }
 
     private static int dayIndex(TripPlan tripPlan, LocalDate date) {
@@ -129,21 +227,6 @@ public class BuildPromptService {
             }
         }
         return 1;
-    }
-
-    private static String header(TripPromptContext ctx) {
-        return """
-                You are an expert travel planner specializing in %s.
-
-                Return ONLY valid JSON (no markdown, no explanations, no extra keys).
-                The output must match EXACTLY the schema below.
-
-                IMPORTANT: Generate the itinerary in TWO languages: English and Hebrew.
-                Provide the exact same structure under "en" and "he".
-                All content (titles, names, notes, openingHours, price fields, directions) must be in the respective language.
-
-                """
-                .formatted(ctx.destination());
     }
 
     private static String tripInputBlock(TripPromptContext ctx, int daysInScope, int totalDays, String dateList) {
@@ -165,56 +248,44 @@ public class BuildPromptService {
                         ctx.groupSummary(), ctx.travelStyle(), ctx.budget());
     }
 
-    private static String dateAwarenessAndEventsBlock(
+    /** Static date-awareness rules — lives in system message for caching. */
+    private static String dateAwarenessRulesBlock() {
+        return """
+                DATE-AWARE PLANNING (HIGHEST PRIORITY)
+                The traveler chose exact dates on purpose. The itinerary must feel timely and local — not generic.
+
+                Before choosing activities, consider for the destination and date range:
+                1) Season (correct hemisphere), holidays, religious observances
+                2) Festivals, markets, concerts, sporting events during this window
+                3) Closures or reduced hours on specific weekdays or holidays
+                4) Seasonal food, weather, and atmosphere for pacing and tips
+
+                INTEGRATION RULES:
+                - Prioritize experiences that only make sense (or are best) during these dates.
+                - Spread time-sensitive events across the trip; schedule each on the correct dayPlan.date.
+                - On public holidays: note closures and offer strong alternatives.
+                - Day titles should reference date-aware themes when relevant.
+
+                """;
+    }
+
+    /** Trip-specific calendar snapshot — varies per user message / chunk. */
+    private static String dateAwarenessCalendarBlock(
             TripPlan tripPlan,
             List<LocalDate> datesInScope,
             TripPromptContext ctx) {
         String calendarSummary = buildCalendarSummary(tripPlan, datesInScope);
         return """
-                DATE-AWARE PLANNING (HIGHEST PRIORITY — read before choosing activities)
-                The traveler chose these EXACT dates on purpose. Your itinerary must feel timely, local, and professional —
-                not a generic list that could work any month.
-
+                CALENDAR FOR THIS REQUEST
                 %s
 
-                BEFORE writing the itinerary, mentally answer for %s during %s to %s:
-                1) What season is it there (use the correct hemisphere for the destination)?
-                2) What major holidays, public holidays, or religious observances fall on these dates?
-                3) What festivals, markets, concerts, sporting events, or cultural programs run during this window?
-                4) What is closed or has reduced hours on specific weekdays or holidays?
-                5) What seasonal food, weather, and atmosphere should shape pacing and clothing tips?
-
-                INTEGRATION RULES (mandatory):
-                - Prioritize events and experiences that ONLY make sense (or are best) during these dates.
-                - If dates overlap Christmas market season in Europe (roughly late Nov–Dec), include named Christmas/winter markets — not vague "holiday shopping".
-                - If cherry blossom season, carnival, national day, Ramadan/Eid, Diwali, Oktoberfest, summer terraces, ski season, etc. applies — weave in real, named experiences.
-                - Spread time-sensitive events across the trip; do not cram everything into day 1.
-                - When an event happens on a specific date, schedule it on THAT dayPlan.date and mention it in the day title or item notes.
-                - If a famous attraction is seasonal (e.g. outdoor baths, boat tours, rooftop bars), only include it when the season supports it.
-                - On public holidays: note closures in notes and offer strong alternatives (open museums, markets, walks, food halls).
-                - Assume travelers may have booked these dates FOR an event — if one likely applies, make it a centerpiece.
-
-                EXAMPLES OF DATE-AWARE CHOICES (adapt to destination):
-                - Late November–December in Germany/Austria/Czechia/France: Christmas markets, mulled wine, winter lights, Advent concerts.
-                - February in Brazil: Carnival-related neighborhoods and events where applicable.
-                - March–April in Japan: cherry blossom viewing spots with peak-timing realism for the city.
-                - July in France: Bastille Day atmosphere, summer festivals, long evening light.
-                - August in Edinburgh: Festival Fringe atmosphere when dates match.
-                - December in New York: holiday windows, ice skating, seasonal shows.
-
-                DAY TITLE RULE: Reference the date-aware theme when relevant (e.g. "Christmas Markets & Old Town Evenings", "Festival Day in Trastevere").
-
                 """
-                .formatted(
-                        calendarSummary,
-                        ctx.destination(),
-                        datesInScope.isEmpty() ? ctx.start() : datesInScope.get(0).toString(),
-                        datesInScope.isEmpty() ? ctx.end() : datesInScope.get(datesInScope.size() - 1).toString());
+                .formatted(calendarSummary);
     }
 
     private static String buildCalendarSummary(TripPlan tripPlan, List<LocalDate> dates) {
         if (dates == null || dates.isEmpty()) {
-            return "- Calendar: (dates unavailable — still infer season from destination and stated range)";
+            return "- Calendar: (dates unavailable — infer season from destination and stated range)";
         }
         LocalDate first = dates.get(0);
         LocalDate last = dates.get(dates.size() - 1);
@@ -238,7 +309,6 @@ public class BuildPromptService {
         String seasonNote = seasonHint(first, last, tripPlan.getDestination());
 
         return """
-                CALENDAR SNAPSHOT
                 - First day: %s (%s)
                 - Last day: %s (%s)
                 - Months covered: %s
@@ -276,20 +346,11 @@ public class BuildPromptService {
                 + end.getDisplayName(TextStyle.FULL, Locale.ENGLISH);
     }
 
-    private static String formatDateRange(TripPlan tripPlan) {
-        if (tripPlan.getStartDate() == null || tripPlan.getEndDate() == null) {
-            return "unspecified";
-        }
-        return tripPlan.getStartDate() + " to " + tripPlan.getEndDate();
-    }
-
     private static String preferencesBlock(TripPromptContext ctx) {
         return """
-                PREFERENCES
+                TRAVELER PREFERENCES
                 - Interests (prioritize across the whole trip): %s
                 - Constraints (STRICT — never violate): %s
-
-                OPTIONAL
                 - Hotel name: %s
                 - Hotel area/address: %s
                 - Transport preference: %s
@@ -303,14 +364,52 @@ public class BuildPromptService {
                         ctx.includeDirections(), ctx.freeText());
     }
 
-    private static String qualityBarBlock(TripPromptContext ctx, boolean chunked) {
-        String chunkNote = chunked
-                ? """
-                LONG-TRIP CHUNK RULE: Later chunks are NOT allowed to be vaguer than earlier ones.
-                Each day in this chunk needs the same specificity as day 1 of a short trip.
-                """
-                : "";
+    private static String trekkingGuidanceBlock(TripPlan tripPlan) {
+        List<String> keys = tripPlan.getTripPreferences() != null
+                && tripPlan.getTripPreferences().getInterests() != null
+                        ? tripPlan.getTripPreferences().getInterests()
+                        : List.of();
+        if (keys.contains("trekkingDifficult")) {
+            return """
+                    
+                    TREKKING PREFERENCE — DIFFICULT (active; shape several days around this)
+                    Include challenging outdoor hiking that matches the destination:
+                    - Full-day or half-day mountain hikes, ridge trails, canyon routes, or long coastal cliff paths
+                    - Typical range: 10–18 km, 500–1200m elevation gain, 4–8 hours including breaks
+                    - Name specific trails, national parks, nature reserves, and summit viewpoints — never generic "hike"
+                    - Schedule as the anchor MORNING or full-day block; lighter food/evening activities afterward
+                    - Note fitness level, weather, gear (boots, water, layers), and seasonal trail conditions in notes
+                    - Avoid flat city strolls as the main "hike"; prioritize strenuous outdoor routes
+                    """;
+        }
+        if (keys.contains("trekkingModerate") || keys.contains("hiking")) {
+            return """
+                    
+                    TREKKING PREFERENCE — MODERATE (active; include on multiple days)
+                    Include balanced hiking and nature experiences:
+                    - Forest, hill, and coastal trails typically 4–10 km, 150–500m elevation, 2–4 hours
+                    - National parks, nature reserves, scenic viewpoints, and lake or valley loops
+                    - Mix well-known trails with lesser-known local routes; name each trail or park explicitly
+                    - Schedule in MORNING or AFTERNOON blocks with realistic travel time from the hotel area
+                    - Combine with food stops or cultural sights nearby — but keep the hike as a clear anchor activity
+                    """;
+        }
+        if (keys.contains("trekkingEasy")) {
+            return """
+                    
+                    TREKKING PREFERENCE — EASY (active; include on multiple days)
+                    Include gentle outdoor walking and nature experiences suitable for most fitness levels:
+                    - Short marked trails, promenades, botanical gardens, lakeside paths, and scenic viewpoints
+                    - Typical range: 1–4 km, minimal elevation (under ~150m), 1–2.5 hours including breaks
+                    - Paved or well-maintained paths; avoid alpine routes, via ferrata, or backcountry treks
+                    - Name specific parks, nature reserves, and easy trails near the destination
+                    - Ideal for MORNING or AFTERNOON blocks; pair with nearby cafés or relaxed sightseeing
+                    """;
+        }
+        return "";
+    }
 
+    private static String qualityBarBlock(TripPromptContext ctx) {
         return """
                 QUALITY BAR (critical — applies to EVERY day)
                 - Write like a knowledgeable local friend, not a brochure.
@@ -321,45 +420,39 @@ public class BuildPromptService {
                 - Rotate cuisine styles and venue types; avoid scheduling the same kind of meal twice in one day.
                 - Reflect interests (%s) on most days with concrete choices, not vague mentions.
                 - Match budget (%s) and travel style (%s): pace, price level, and energy.
-                - DATE-AWARE: Each day must reflect that calendar date's season, holidays, and local events (see DATE-AWARE PLANNING section).
-                - In notes, briefly explain WHY this activity fits THIS date (e.g. "open late for Christmas market season", "festival weekend").
+                - DATE-AWARE: Each day must reflect that calendar date's season, holidays, and local events.
+                - In notes, briefly explain WHY this activity fits THIS date.
 
                 ITEM DETAIL REQUIREMENTS (use separate JSON fields — NEVER put hours or price inside notes)
                 - ATTRACTION:
-                  - notes: DETAILED description only (3–5 sentences, min ~120 characters). Include:
-                    why it is worth visiting for THIS traveler, what to see/do, suggested duration,
-                    one practical tip (best time, tickets, crowds, dress code), and why it fits THIS date.
-                    Do NOT include opening hours or price text in notes.
+                  - notes: DETAILED description only (3–5 sentences, min ~80 characters). Include:
+                    why it is worth visiting, what to see/do, suggested duration, one practical tip, and why it fits THIS date.
                   - openingHours: time range only (e.g. "09:00 - 18:00" or "varies").
                   - price: ticket/entry cost only (e.g. "€15-20 per person" or "free").
                   - averagePricePerDish: null
-                  IMPORTANT: Do not schedule attractions when typically closed on that weekday/holiday.
-                  location.name = neighborhood or address area in %s.
+                  - location.name = neighborhood or address area in %s.
                 - FOOD (restaurants/cafés):
-                  - notes: DETAILED description only (2–4 sentences). Cuisine style, atmosphere,
-                    1–2 specific dishes/drinks to order, and why it fits the day. No hours or price in notes.
+                  - notes: DETAILED description only (2–4 sentences, min ~60 characters). Cuisine, atmosphere,
+                    1–2 specific dishes/drinks to order, and why it fits the day.
                   - openingHours: time range only (e.g. "12:00 - 23:00").
                   - averagePricePerDish: cost range only (e.g. "€12-18").
                   - price: null
-                - TRANSIT / NOTE:
-                  - openingHours, price, averagePricePerDish: null
-                  - notes: brief context if helpful.
+                - TRANSIT / NOTE: openingHours, price, averagePricePerDish: null; notes brief if helpful.
                 - TRANSIT: Clear route; directions name lines/stops/landmarks where possible.
                 - Each block: 2–3 items (one anchor experience + food/transit as needed). Never empty items arrays.
 
                 VARIETY & REALISM
                 - Mix icons with hidden gems; include at least one everyday local ritual (market, bakery, promenade).
                 - No duplicate venue names across the trip.
-                - Day titles: evocative and specific (e.g. "Ancient Hills & Plaka Evenings"), not "Day 5 Sightseeing".
-                %s
+                - Day titles: evocative and specific, not "Day 5 Sightseeing".
+
                 """
                 .formatted(
                         ctx.destination(),
                         ctx.interests(),
                         ctx.budget(),
                         ctx.travelStyle(),
-                        ctx.destination(),
-                        chunkNote);
+                        ctx.destination());
     }
 
     private static String chunkArcBlock(
@@ -378,7 +471,8 @@ public class BuildPromptService {
                 .formatted(tripDayStart, tripDayEnd, totalDays, destination, phase);
     }
 
-    private static String hardRulesBlock(
+    /** Scope-specific rules that vary per request — user message only. */
+    private static String hardRulesScopeBlock(
             TripPromptContext ctx,
             int daysInScope,
             String rangeStart,
@@ -393,33 +487,80 @@ public class BuildPromptService {
                         + "- Cover every date from " + rangeStart + " through " + rangeEnd + ".\n";
 
         String pacingHint = tripDayStart > 1
-                ? "- Trip day " + tripDayStart + "+: travelers are settled — you can plan fuller days, but keep commutes realistic.\n"
+                ? "- Trip day " + tripDayStart + "+: travelers are settled — plan fuller days, keep commutes realistic.\n"
                 : "";
 
+        String completionRule = chunked
+                ? "Chunk " + chunkIndex + "/" + totalChunks + " — complete all dates in this chunk."
+                : "Complete all calendar days — do not stop early.";
+
+        return """
+                SCOPE FOR THIS REQUEST
+                %s
+                %s
+                %s
+
+                """
+                .formatted(scopeRule, pacingHint, completionRule);
+    }
+
+    /** Static hard rules — system message. */
+    private static String hardRulesScopeBlockEnglish(
+            TripPromptContext ctx,
+            int daysInScope,
+            String rangeStart,
+            String rangeEnd,
+            boolean chunked,
+            int chunkIndex,
+            int totalChunks,
+            int tripDayStart) {
+        String scopeRule = chunked
+                ? "- Output exactly " + daysInScope + " day objects for dates " + rangeStart + " through " + rangeEnd + " only.\n"
+                : "- dayPlans must have exactly " + daysInScope + " objects.\n"
+                        + "- Cover every date from " + rangeStart + " through " + rangeEnd + ".\n";
+
+        String pacingHint = tripDayStart > 1
+                ? "- Trip day " + tripDayStart + "+: travelers are settled — plan fuller days, keep commutes realistic.\n"
+                : "";
+
+        String completionRule = chunked
+                ? "Chunk " + chunkIndex + "/" + totalChunks + " — complete all dates in this chunk."
+                : "Complete all calendar days — do not stop early.";
+
+        return """
+                SCOPE FOR THIS REQUEST
+                %s
+                %s
+                %s
+
+                """
+                .formatted(scopeRule, pacingHint, completionRule);
+    }
+
+    /** Static hard rules for English generation — system message. */
+    private static String hardRulesBaseBlockEnglish(TripPromptContext ctx) {
+        return hardRulesBaseBlock(ctx).replace(
+                "6) \"en\" in English, \"he\" in proper Hebrew (not transliteration unless a proper name).",
+                "6) All text in English.");
+    }
+
+    private static String hardRulesBaseBlock(TripPromptContext ctx) {
         return """
                 HARD RULES
                 1) Constraints are STRICT: %s
                 2) Interests are HIGH PRIORITY throughout.
-                2b) DATE-AWARENESS is HIGH PRIORITY: do not output a seasonally wrong or generic itinerary; anchor to the exact dates.
+                2b) DATE-AWARENESS is HIGH PRIORITY: anchor to the exact dates provided in each request.
                 3) Schema discipline:
                    - Each day: exactly THREE blocks with field "timeBlock" (NOT "title"): MORNING, AFTERNOON, EVENING.
                    - Item type must be exactly: FOOD, ATTRACTION, TRANSIT, or NOTE (never ACTIVITY).
                    - NEVER return a block with an empty "items" array.
                    - ATTRACTION/FOOD: openingHours and price (or averagePricePerDish) MUST be separate JSON fields, not inside notes.
-                %s
-                4) %s
-                5) Do NOT invent latitude/longitude — use null on location.lat and location.lng.
-                6) If include directions is true, every item needs transit with non-empty directions.
-                7) "en" in English, "he" in proper Hebrew (not transliteration unless a proper name).
-                %s
+                4) Do NOT invent latitude/longitude — use null on location.lat and location.lng.
+                5) If include directions is true, every item needs transit with non-empty directions.
+                6) "en" in English, "he" in proper Hebrew (not transliteration unless a proper name).
+
                 """
-                .formatted(
-                        ctx.constraints(),
-                        scopeRule,
-                        chunked
-                                ? "Chunk " + chunkIndex + "/" + totalChunks + " — same quality standard as chunk 1."
-                                : "Complete all calendar days — do not stop early.",
-                        pacingHint);
+                .formatted(ctx.constraints());
     }
 
     private static String transportRulesBlock(TripPromptContext ctx) {
@@ -432,6 +573,80 @@ public class BuildPromptService {
 
                 """
                 .formatted(ctx.transportPref(), ctx.hotelName(), ctx.hotelAddress());
+    }
+
+    private static String englishJsonSchemaBlock() {
+        return """
+                OUTPUT JSON SCHEMA (exact)
+                {
+                  "dayPlans": [
+                    {
+                      "date": "yyyy-MM-dd",
+                      "title": "string (specific, English)",
+                      "blocks": [
+                        {
+                          "timeBlock": "MORNING|AFTERNOON|EVENING",
+                          "items": [
+                            {
+                              "type": "FOOD|ATTRACTION|TRANSIT|NOTE",
+                              "name": "string (specific venue or place name, English)",
+                              "location": { "name": "neighborhood or area", "lat": null, "lng": null },
+                              "notes": "string (detailed description ONLY — no hours/price here)",
+                              "openingHours": "string or null (e.g. 09:00 - 18:00)",
+                              "price": "string or null (ATTRACTION ticket price)",
+                              "averagePricePerDish": "string or null (FOOD only)",
+                              "transit": {
+                                "from": "string",
+                                "mode": "WALK|METRO|BUS|TRAM|TRAIN|TAXI|CAR|TRANSFER|MIXED",
+                                "estimatedMinutes": 0,
+                                "directions": "string"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+
+                """;
+    }
+
+    private static String hebrewJsonSchemaBlock() {
+        return """
+                OUTPUT JSON SCHEMA (exact)
+                {
+                  "dayPlans": [
+                    {
+                      "date": "yyyy-MM-dd",
+                      "title": "string (Hebrew)",
+                      "blocks": [
+                        {
+                          "timeBlock": "MORNING|AFTERNOON|EVENING",
+                          "items": [
+                            {
+                              "type": "FOOD|ATTRACTION|TRANSIT|NOTE",
+                              "name": "string (Hebrew)",
+                              "location": { "name": "neighborhood or area in Hebrew", "lat": null, "lng": null },
+                              "notes": "string (Hebrew, detailed description ONLY)",
+                              "openingHours": "string or null",
+                              "price": "string or null",
+                              "averagePricePerDish": "string or null",
+                              "transit": {
+                                "from": "string (Hebrew)",
+                                "mode": "WALK|METRO|BUS|TRAM|TRAIN|TAXI|CAR|TRANSFER|MIXED",
+                                "estimatedMinutes": 0,
+                                "directions": "string (Hebrew)"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+
+                """;
     }
 
     private static String jsonSchemaBlock() {

@@ -39,6 +39,7 @@ public class TripPlan {
     private DisplayLanguage displayLanguage;
     private TripStatus tripStatus;
     private String aiRawResponse;
+    private GenerationProgress generationProgress;
     @CreatedDate
     private Instant createdAt;
     @LastModifiedDate
